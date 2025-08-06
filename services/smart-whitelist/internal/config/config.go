@@ -9,13 +9,14 @@ import (
 
 // Config holds all configuration for the smart-whitelist service
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Database DatabaseConfig `mapstructure:"database"`
-	Redis    RedisConfig    `mapstructure:"redis"`
-	ML       MLConfig       `mapstructure:"ml"`
-	Metrics  MetricsConfig  `mapstructure:"metrics"`
-	Cleanup  CleanupConfig  `mapstructure:"cleanup"`
-	Logging  LoggingConfig  `mapstructure:"logging"`
+	Server      ServerConfig      `mapstructure:"server"`
+	Database    DatabaseConfig    `mapstructure:"database"`
+	Redis       RedisConfig       `mapstructure:"redis"`
+	ML          MLConfig          `mapstructure:"ml"`
+	Metrics     MetricsConfig     `mapstructure:"metrics"`
+	Cleanup     CleanupConfig     `mapstructure:"cleanup"`
+	Logging     LoggingConfig     `mapstructure:"logging"`
+	Integration IntegrationConfig `mapstructure:"integration"`
 }
 
 // ServerConfig contains HTTP server configuration
@@ -94,6 +95,15 @@ type LoggingConfig struct {
 	Level       string `mapstructure:"level" default:"info"`
 	Development bool   `mapstructure:"development" default:"false"`
 	Encoding    string `mapstructure:"encoding" default:"json"`
+}
+
+// IntegrationConfig contains external service integration configuration
+type IntegrationConfig struct {
+	UserManagementURL    string        `mapstructure:"user_management_url"`
+	UserManagementAPIKey string        `mapstructure:"user_management_api_key"`
+	RequestTimeout       time.Duration `mapstructure:"request_timeout" default:"30s"`
+	RetryAttempts        int           `mapstructure:"retry_attempts" default:"3"`
+	RetryDelay           time.Duration `mapstructure:"retry_delay" default:"1s"`
 }
 
 // Load loads configuration from environment variables and config files
@@ -196,6 +206,11 @@ func setDefaults() {
 	viper.SetDefault("logging.level", "info")
 	viper.SetDefault("logging.development", false)
 	viper.SetDefault("logging.encoding", "json")
+	
+	// Integration defaults
+	viper.SetDefault("integration.request_timeout", "30s")
+	viper.SetDefault("integration.retry_attempts", 3)
+	viper.SetDefault("integration.retry_delay", "1s")
 }
 
 // validate validates the configuration

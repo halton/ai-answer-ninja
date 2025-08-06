@@ -11,8 +11,10 @@ import (
 
 	"smart-whitelist/internal/cache"
 	"smart-whitelist/internal/config"
+	"smart-whitelist/internal/integration"
 	"smart-whitelist/internal/ml"
 	"smart-whitelist/internal/models"
+	"smart-whitelist/internal/monitoring"
 	"smart-whitelist/internal/repository"
 )
 
@@ -31,6 +33,12 @@ type SmartWhitelistService struct {
 	learningWorkers int
 	mu              sync.RWMutex
 	learningStats   map[uuid.UUID]*UserLearningStats
+	
+	// Enhanced components
+	rulesEngine          *ml.RulesEngine
+	metricsCollector     *monitoring.MetricsCollector
+	auditLogger          *monitoring.AuditLogger
+	userManagementClient *integration.UserManagementClient
 }
 
 // LearningEvent represents a learning event for the ML system

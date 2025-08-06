@@ -1,6 +1,6 @@
 {
   "hooks": {
-    "task_complete": "./.claude/hooks/task_complete.sh"
+    "task_complete": "./.claude/hooks/complete_with_notification.sh"
   },
   "auto_commit": {
     "enabled": true,

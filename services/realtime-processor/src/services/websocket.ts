@@ -811,6 +811,10 @@ export class WebSocketManager {
       },
       uptime: Date.now() - context.startTime,
       lastActivity: context.lastActivity,
+      webrtcConnection: (context as any).webrtcConnectionId ? {
+        id: (context as any).webrtcConnectionId,
+        stats: await this.webrtcManager.getConnectionStats((context as any).webrtcConnectionId)
+      } : null,
     };
   }
 

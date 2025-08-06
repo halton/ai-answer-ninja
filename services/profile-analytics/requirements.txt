@@ -1,0 +1,89 @@
+# FastAPI and web framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database and ORM
+sqlalchemy==2.0.23
+asyncpg==0.29.0
+alembic==1.12.1
+
+# Machine Learning and Data Processing
+scikit-learn==1.3.2
+pandas==2.1.4
+numpy==1.24.4
+scipy==1.11.4
+joblib==1.3.2
+xgboost==2.0.1
+lightgbm==4.1.0
+
+# Feature Engineering
+feature-engine==1.6.2
+category-encoders==2.6.2
+imbalanced-learn==0.11.0
+
+# Time Series and Statistics
+statsmodels==0.14.0
+pytz==2023.3
+python-dateutil==2.8.2
+
+# Natural Language Processing
+nltk==3.8.1
+textblob==0.17.1
+spacy==3.7.2
+transformers==4.36.2
+sentence-transformers==2.2.2
+
+# Azure services
+azure-cognitiveservices-speech==1.34.0
+azure-ai-textanalytics==5.3.0
+azure-storage-blob==12.19.0
+
+# Caching and Redis
+redis==5.0.1
+hiredis==2.2.3
+
+# HTTP client and async
+httpx==0.25.2
+aiohttp==3.9.1
+asyncio-throttle==1.0.2
+
+# Monitoring and logging
+prometheus-client==0.19.0
+structlog==23.2.0
+opentelemetry-api==1.21.0
+opentelemetry-sdk==1.21.0
+opentelemetry-instrumentation-fastapi==0.42b0
+
+# Data validation and serialization
+marshmallow==3.20.1
+cerberus==1.3.5
+
+# Background tasks and scheduling
+celery==5.3.4
+redis==5.0.1
+flower==2.0.1
+
+# Utilities
+python-multipart==0.0.6
+python-jose[cryptography]==3.3.0
+email-validator==2.1.0
+typer==0.9.0
+click==8.1.7
+rich==13.7.0
+
+# Development and testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+black==23.11.0
+flake8==6.1.0
+mypy==1.7.1
+isort==5.12.0
+
+# Data visualization (optional for development)
+matplotlib==3.8.2
+seaborn==0.13.0
+plotly==5.17.0

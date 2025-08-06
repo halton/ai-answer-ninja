@@ -311,6 +311,247 @@ func (s *CacheService) Ping(ctx context.Context) error {
 	return s.cache.Ping(ctx)
 }
 
+// GetWhitelistEntries retrieves multiple whitelist entries with pagination
+func (s *CacheService) GetWhitelistEntries(ctx context.Context, query *models.WhitelistQuery) ([]*models.SmartWhitelist, error) {
+	// For multiple entries, go directly to database as caching complex queries is less beneficial
+	// In production, you might want to cache certain common query patterns
+	
+	entries, err := s.whitelistRepo.List(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Asynchronously cache individual entries for future single lookups
+	go func() {
+		cacheCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		
+		for _, entry := range entries {
+			if cacheErr := s.cache.SetWhitelist(cacheCtx, entry); cacheErr != nil {
+				s.logger.Warn("failed to cache whitelist entry from batch", 
+					zap.Error(cacheErr),
+					zap.String("entry_id", entry.ID.String()))
+			}
+		}
+	}()
+	
+	return entries, nil
+}
+
+// GetWhitelistCount returns the total count of whitelist entries matching the query
+func (s *CacheService) GetWhitelistCount(ctx context.Context, query *models.WhitelistQuery) (int64, error) {
+	// Try cache first for common count queries
+	cacheKey := s.buildCountCacheKey(query)
+	if cachedCount, err := s.cache.GetCount(ctx, cacheKey); err == nil && cachedCount >= 0 {
+		return cachedCount, nil
+	}
+	
+	// Database fallback
+	count, err := s.whitelistRepo.Count(ctx, query)
+	if err != nil {
+		return 0, err
+	}
+	
+	// Cache the result asynchronously
+	go func() {
+		cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if cacheErr := s.cache.SetCount(cacheCtx, cacheKey, count, 5*time.Minute); cacheErr != nil {
+			s.logger.Warn("failed to cache count", zap.Error(cacheErr))
+		}
+	}()
+	
+	return count, nil
+}
+
+// CleanupExpired removes expired whitelist entries for a user
+func (s *CacheService) CleanupExpired(ctx context.Context, userID uuid.UUID) (int64, error) {
+	count, err := s.whitelistRepo.DeleteExpired(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	
+	// Invalidate user cache after cleanup
+	go func() {
+		cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if invalidateErr := s.cache.InvalidateUserCache(cacheCtx, userID); invalidateErr != nil {
+			s.logger.Warn("failed to invalidate user cache after cleanup", zap.Error(invalidateErr))
+		}
+	}()
+	
+	return count, nil
+}
+
+// ClearUserWhitelist removes all whitelist entries for a user (used in import replace mode)
+func (s *CacheService) ClearUserWhitelist(ctx context.Context, userID uuid.UUID) error {
+	err := s.whitelistRepo.DeleteAllForUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	
+	// Invalidate user cache
+	go func() {
+		cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if invalidateErr := s.cache.InvalidateUserCache(cacheCtx, userID); invalidateErr != nil {
+			s.logger.Warn("failed to invalidate user cache after clear", zap.Error(invalidateErr))
+		}
+	}()
+	
+	return nil
+}
+
+// BatchCreateWhitelists creates multiple whitelist entries efficiently
+func (s *CacheService) BatchCreateWhitelists(ctx context.Context, entries []*models.CreateWhitelistRequest) ([]*models.SmartWhitelist, []error) {
+	created, errors := s.whitelistRepo.BatchCreate(ctx, entries)
+	
+	// Cache successful entries asynchronously
+	if len(created) > 0 {
+		go func() {
+			cacheCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			
+			for _, entry := range created {
+				if entry != nil {
+					if cacheErr := s.cache.SetWhitelist(cacheCtx, entry); cacheErr != nil {
+						s.logger.Warn("failed to cache batch created entry", 
+							zap.Error(cacheErr),
+							zap.String("entry_id", entry.ID.String()))
+					}
+				}
+			}
+		}()
+	}
+	
+	return created, errors
+}
+
+// PrewarmCache preloads frequently accessed data into cache
+func (s *CacheService) PrewarmCache(ctx context.Context, userID uuid.UUID) error {
+	start := time.Now()
+	
+	// Prewarm user data
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user != nil {
+		if cacheErr := s.cache.SetUser(ctx, user); cacheErr != nil {
+			s.logger.Warn("failed to prewarm user cache", zap.Error(cacheErr))
+		}
+	}
+	
+	// Prewarm recent whitelist entries (active ones)
+	query := &models.WhitelistQuery{
+		UserID:   &userID,
+		IsActive: &[]bool{true}[0],
+		Limit:    100, // Prewarm top 100 active entries
+	}
+	
+	entries, err := s.whitelistRepo.List(ctx, query)
+	if err != nil {
+		s.logger.Warn("failed to prewarm whitelist entries", zap.Error(err))
+	} else {
+		// Cache entries in background
+		go func() {
+			cacheCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			
+			for _, entry := range entries {
+				if cacheErr := s.cache.SetWhitelist(cacheCtx, entry); cacheErr != nil {
+					s.logger.Warn("failed to prewarm whitelist entry", zap.Error(cacheErr))
+				}
+			}
+		}()
+	}
+	
+	// Prewarm user stats
+	stats, err := s.whitelistRepo.GetStats(ctx, userID)
+	if err != nil {
+		s.logger.Warn("failed to prewarm user stats", zap.Error(err))
+	} else if stats != nil {
+		if cacheErr := s.cache.SetStats(ctx, stats); cacheErr != nil {
+			s.logger.Warn("failed to cache prewarmed stats", zap.Error(cacheErr))
+		}
+	}
+	
+	s.logger.Info("cache prewarmed for user",
+		zap.String("user_id", userID.String()),
+		zap.Duration("duration", time.Since(start)))
+	
+	return nil
+}
+
+// GetCacheHealth returns health information about the cache
+func (s *CacheService) GetCacheHealth(ctx context.Context) map[string]interface{} {
+	health := make(map[string]interface{})
+	
+	// Test cache connectivity
+	if err := s.cache.Ping(ctx); err != nil {
+		health["cache_status"] = "unhealthy"
+		health["cache_error"] = err.Error()
+	} else {
+		health["cache_status"] = "healthy"
+	}
+	
+	// Get cache statistics
+	if stats, err := s.cache.GetCacheStats(ctx); err == nil {
+		health["cache_stats"] = stats
+	}
+	
+	// Test database connectivity
+	if err := s.whitelistRepo.Ping(ctx); err != nil {
+		health["database_status"] = "unhealthy"
+		health["database_error"] = err.Error()
+	} else {
+		health["database_status"] = "healthy"
+	}
+	
+	health["timestamp"] = time.Now()
+	return health
+}
+
+// OptimizeCache performs cache optimization tasks
+func (s *CacheService) OptimizeCache(ctx context.Context) error {
+	start := time.Now()
+	
+	// Cleanup expired cache entries
+	if err := s.cache.CleanupExpired(ctx); err != nil {
+		s.logger.Warn("failed to cleanup expired cache entries", zap.Error(err))
+	}
+	
+	// Optimize cache memory usage
+	if err := s.cache.OptimizeMemory(ctx); err != nil {
+		s.logger.Warn("failed to optimize cache memory", zap.Error(err))
+	}
+	
+	// Log optimization completion
+	s.logger.Info("cache optimization completed",
+		zap.Duration("duration", time.Since(start)))
+	
+	return nil
+}
+
+// buildCountCacheKey builds a cache key for count queries
+func (s *CacheService) buildCountCacheKey(query *models.WhitelistQuery) string {
+	key := "count"
+	if query.UserID != nil {
+		key += ":user:" + query.UserID.String()
+	}
+	if query.IsActive != nil {
+		if *query.IsActive {
+			key += ":active"
+		} else {
+			key += ":inactive"
+		}
+	}
+	if query.WhitelistType != nil {
+		key += ":type:" + string(*query.WhitelistType)
+	}
+	return key
+}
+
 // NewRedisClient creates a new Redis client for dependency injection
 func NewRedisClient(cfg *config.Config, logger *zap.Logger) (*RedisCache, error) {
 	return NewRedisCache(&cfg.Redis, logger)

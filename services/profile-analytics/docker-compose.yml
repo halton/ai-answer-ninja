@@ -1,0 +1,171 @@
+version: '3.8'
+
+services:
+  profile-analytics:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: profile-analytics-service
+    restart: unless-stopped
+    ports:
+      - "3004:3004"
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - LOG_LEVEL=INFO
+      - HOST=0.0.0.0
+      - PORT=3004
+      
+      # Database
+      - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/ai_answer_ninja
+      - DATABASE_POOL_SIZE=10
+      - DATABASE_POOL_OVERFLOW=20
+      
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_PREFIX=profile_analytics:
+      - CACHE_TTL=3600
+      
+      # CORS
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:8080
+      
+      # ML Settings
+      - ML_MODEL_PATH=/app/ml/models
+      - ML_MODEL_UPDATE_INTERVAL=3600
+      - FEATURE_STORE_PATH=/app/ml/features
+      
+      # Azure Cognitive Services (optional)
+      - AZURE_COGNITIVE_KEY=${AZURE_COGNITIVE_KEY:-}
+      - AZURE_COGNITIVE_ENDPOINT=${AZURE_COGNITIVE_ENDPOINT:-}
+      - AZURE_COGNITIVE_REGION=eastus2
+      
+      # Service Discovery
+      - SERVICE_REGISTRY_URL=http://consul:8500
+      - USER_MANAGEMENT_URL=http://user-management:3005
+      - SMART_WHITELIST_URL=http://smart-whitelist:3006
+      - CONVERSATION_ENGINE_URL=http://conversation-engine:3003
+      
+      # Feature Flags
+      - ENABLE_REAL_TIME_PROFILING=true
+      - ENABLE_BATCH_LEARNING=true
+      - ENABLE_ADVANCED_ANALYTICS=false
+      - ENABLE_NLP_FEATURES=true
+      
+      # Security
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      
+      # Data Retention
+      - PROFILE_DATA_RETENTION_DAYS=365
+      - CALL_DATA_RETENTION_DAYS=90
+      - ANALYTICS_DATA_RETENTION_DAYS=730
+      
+      # Performance
+      - BATCH_SIZE=1000
+      - BATCH_PROCESSING_INTERVAL=300
+      - RATE_LIMIT_REQUESTS=1000
+      - RATE_LIMIT_WINDOW=60
+      
+    volumes:
+      - ml_models:/app/ml/models
+      - ml_features:/app/ml/features
+      - app_logs:/app/logs
+    
+    depends_on:
+      - postgres
+      - redis
+    
+    networks:
+      - ai-ninja-network
+    
+    labels:
+      - "ai-ninja.service=profile-analytics"
+      - "ai-ninja.version=1.0.0"
+      - "traefik.enable=true"
+      - "traefik.http.routers.profile-analytics.rule=Host(`profile-analytics.local`)"
+      - "traefik.http.services.profile-analytics.loadbalancer.server.port=3004"
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: profile-analytics-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=ai_answer_ninja
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    ports:
+      - "5433:5432"
+    networks:
+      - ai-ninja-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: profile-analytics-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6380:6379"
+    networks:
+      - ai-ninja-network
+
+  # Development tools
+  redis-commander:
+    image: ghcr.io/joeferner/redis-commander:latest
+    container_name: profile-analytics-redis-ui
+    restart: unless-stopped
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8082:8081"
+    depends_on:
+      - redis
+    networks:
+      - ai-ninja-network
+    profiles:
+      - dev
+
+  # Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: profile-analytics-prometheus
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - ai-ninja-network
+    profiles:
+      - monitoring
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  ml_models:
+    driver: local
+  ml_features:
+    driver: local
+  app_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+
+networks:
+  ai-ninja-network:
+    external: true

@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Answer Ninja - Realtime Communication Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .status-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        .status-card.connected { border-left-color: #28a745; }
+        .status-card.connecting { border-left-color: #ffc107; }
+        .status-card.error { border-left-color: #dc3545; }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-warning { background: #ffc107; color: black; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-secondary { background: #6c757d; color: white; }
+        
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button:hover:not(:disabled) { opacity: 0.9; }
+        
+        .log-panel {
+            background: #000;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 8px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin-bottom: 20px;
+        }
+        .audio-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .audio-level {
+            width: 200px;
+            height: 20px;
+            background: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .audio-level-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #ffc107, #dc3545);
+            width: 0%;
+            transition: width 0.1s ease;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .stat-item {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 AI Answer Ninja - Realtime Communication Test Client</h1>
+        
+        <!-- Connection Status Panel -->
+        <div class="status-panel">
+            <div class="status-card" id="wsStatus">
+                <h4>WebSocket</h4>
+                <div id="wsStatusText">Disconnected</div>
+            </div>
+            <div class="status-card" id="webrtcStatus">
+                <h4>WebRTC</h4>
+                <div id="webrtcStatusText">Not Connected</div>
+            </div>
+            <div class="status-card" id="audioStatus">
+                <h4>Audio</h4>
+                <div id="audioStatusText">Not Available</div>
+            </div>
+            <div class="status-card" id="processingStatus">
+                <h4>Processing</h4>
+                <div id="processingStatusText">Idle</div>
+            </div>
+        </div>
+        
+        <!-- Controls -->
+        <div class="controls">
+            <button id="connectBtn" class="btn-primary">Connect</button>
+            <button id="disconnectBtn" class="btn-danger" disabled>Disconnect</button>
+            <button id="startAudioBtn" class="btn-success" disabled>Start Audio</button>
+            <button id="stopAudioBtn" class="btn-warning" disabled>Stop Audio</button>
+            <button id="enableWebRTCBtn" class="btn-primary" disabled>Enable WebRTC</button>
+            <button id="sendTestAudioBtn" class="btn-secondary" disabled>Send Test Audio</button>
+        </div>
+        
+        <!-- Audio Controls -->
+        <div class="audio-controls">
+            <label>Audio Level:</label>
+            <div class="audio-level">
+                <div class="audio-level-bar" id="audioLevelBar"></div>
+            </div>
+            <span id="audioLevelText">0%</span>
+        </div>
+        
+        <!-- Message Log -->
+        <div class="log-panel" id="logPanel">
+            <div>[INFO] Client initialized. Ready to connect...</div>
+        </div>
+        
+        <!-- Statistics -->
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="stat-value" id="latencyValue">0</div>
+                <div class="stat-label">Latency (ms)</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="messagesValue">0</div>
+                <div class="stat-label">Messages</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="errorsValue">0</div>
+                <div class="stat-label">Errors</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="connectionTimeValue">0s</div>
+                <div class="stat-label">Connection Time</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class RealtimeClient {
+            constructor() {
+                this.ws = null;
+                this.webrtc = null;
+                this.mediaStream = null;
+                this.audioContext = null;
+                this.processor = null;
+                this.isRecording = false;
+                this.sequenceNumber = 0;
+                this.stats = {
+                    messages: 0,
+                    errors: 0,
+                    startTime: null,
+                    latency: []
+                };
+                this.setupEventListeners();
+                this.updateConnectionTime();
+            }
+
+            setupEventListeners() {
+                document.getElementById('connectBtn').onclick = () => this.connect();
+                document.getElementById('disconnectBtn').onclick = () => this.disconnect();
+                document.getElementById('startAudioBtn').onclick = () => this.startAudio();
+                document.getElementById('stopAudioBtn').onclick = () => this.stopAudio();
+                document.getElementById('enableWebRTCBtn').onclick = () => this.enableWebRTC();
+                document.getElementById('sendTestAudioBtn').onclick = () => this.sendTestAudio();
+            }
+
+            log(message, type = 'INFO') {
+                const timestamp = new Date().toLocaleTimeString();
+                const logPanel = document.getElementById('logPanel');
+                const logEntry = document.createElement('div');
+                logEntry.textContent = `[${timestamp}] [${type}] ${message}`;
+                logPanel.appendChild(logEntry);
+                logPanel.scrollTop = logPanel.scrollHeight;
+            }
+
+            updateStatus(component, status, className = '') {
+                const element = document.getElementById(`${component}Status`);
+                const textElement = document.getElementById(`${component}StatusText`);
+                textElement.textContent = status;
+                element.className = `status-card ${className}`;
+            }
+
+            updateStats() {
+                document.getElementById('messagesValue').textContent = this.stats.messages;
+                document.getElementById('errorsValue').textContent = this.stats.errors;
+                
+                if (this.stats.latency.length > 0) {
+                    const avgLatency = this.stats.latency.reduce((a, b) => a + b, 0) / this.stats.latency.length;
+                    document.getElementById('latencyValue').textContent = Math.round(avgLatency);
+                }
+            }
+
+            updateConnectionTime() {
+                if (this.stats.startTime) {
+                    const duration = Math.floor((Date.now() - this.stats.startTime) / 1000);
+                    document.getElementById('connectionTimeValue').textContent = `${duration}s`;
+                }
+                setTimeout(() => this.updateConnectionTime(), 1000);
+            }
+
+            async connect() {
+                try {
+                    this.log('Connecting to WebSocket server...');
+                    this.updateStatus('ws', 'Connecting...', 'connecting');
+                    
+                    // Generate a simple test token
+                    const userId = 'test-user';
+                    const callId = 'call-' + Date.now();
+                    const token = `valid_${userId}_${callId}`;
+                    
+                    const wsUrl = `ws://localhost:3002/realtime/conversation?token=${token}`;
+                    this.ws = new WebSocket(wsUrl);
+                    
+                    this.ws.onopen = () => {
+                        this.log('WebSocket connected successfully');
+                        this.updateStatus('ws', 'Connected', 'connected');
+                        this.stats.startTime = Date.now();
+                        this.updateButtons();
+                        this.sendHeartbeat();
+                    };
+                    
+                    this.ws.onmessage = (event) => {
+                        this.handleWebSocketMessage(JSON.parse(event.data));
+                    };
+                    
+                    this.ws.onerror = (error) => {
+                        this.log(`WebSocket error: ${error.message || 'Unknown error'}`, 'ERROR');
+                        this.stats.errors++;
+                        this.updateStatus('ws', 'Error', 'error');
+                        this.updateStats();
+                    };
+                    
+                    this.ws.onclose = (event) => {
+                        this.log(`WebSocket disconnected (Code: ${event.code})`);
+                        this.updateStatus('ws', 'Disconnected', '');
+                        this.updateButtons();
+                    };
+                    
+                } catch (error) {
+                    this.log(`Connection failed: ${error.message}`, 'ERROR');
+                    this.stats.errors++;
+                    this.updateStatus('ws', 'Error', 'error');
+                    this.updateStats();
+                }
+            }
+
+            handleWebSocketMessage(message) {
+                const messageTime = Date.now();
+                this.stats.messages++;
+                
+                this.log(`Received: ${message.type}`);
+                
+                switch (message.type) {
+                    case 'connection_status':
+                        this.handleConnectionStatus(message);
+                        break;
+                    case 'webrtc_offer':
+                        this.handleWebRTCOffer(message.data);
+                        break;
+                    case 'webrtc_answer':
+                        this.handleWebRTCAnswer(message.data);
+                        break;
+                    case 'webrtc_ice_candidate':
+                        this.handleWebRTCIceCandidate(message.data);
+                        break;
+                    case 'ai_response':
+                        this.handleAIResponse(message);
+                        break;
+                    case 'transcript':
+                        this.handleTranscript(message);
+                        break;
+                    case 'processing_status':
+                        this.handleProcessingStatus(message);
+                        break;
+                    case 'heartbeat':
+                        // Calculate latency
+                        if (message.data.serverTime) {
+                            const latency = messageTime - message.data.serverTime;
+                            this.stats.latency.push(latency);
+                            if (this.stats.latency.length > 10) {
+                                this.stats.latency = this.stats.latency.slice(-10);
+                            }
+                        }
+                        break;
+                    case 'error':
+                        this.log(`Server error: ${message.data.error}`, 'ERROR');
+                        this.stats.errors++;
+                        break;
+                }
+                
+                this.updateStats();
+            }
+
+            handleConnectionStatus(message) {
+                if (message.data.status === 'connected') {
+                    this.log(`Connection established: ${message.data.connectionId}`);
+                    this.updateStatus('processing', 'Ready', 'connected');
+                }
+            }
+
+            handleWebRTCOffer(data) {
+                this.log('Received WebRTC offer, creating answer...');
+                // This would be handled by the WebRTC implementation
+                // For now, just log it
+            }
+
+            handleAIResponse(message) {
+                this.log(`AI Response received: "${message.data.text}" (Confidence: ${message.data.confidence})`);
+                this.updateStatus('processing', 'Response Received', 'connected');
+                
+                // Play audio response if available
+                if (message.data.audioData) {
+                    this.playAudioResponse(message.data.audioData);
+                }
+            }
+
+            handleTranscript(message) {
+                this.log(`Transcript: "${message.data.transcript}" (Confidence: ${message.data.confidence})`);
+            }
+
+            handleProcessingStatus(message) {
+                this.updateStatus('processing', `Processing: ${message.data.stage}`, 'connecting');
+            }
+
+            async playAudioResponse(audioData) {
+                try {
+                    // Convert base64 to blob and play
+                    const audioBlob = new Blob([Uint8Array.from(atob(audioData), c => c.charCodeAt(0))]);
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    const audio = new Audio(audioUrl);
+                    await audio.play();
+                    this.log('Playing AI audio response');
+                } catch (error) {
+                    this.log(`Failed to play audio response: ${error.message}`, 'ERROR');
+                }
+            }
+
+            sendHeartbeat() {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.sendMessage({
+                        type: 'heartbeat',
+                        callId: 'test-call',
+                        timestamp: Date.now()
+                    });
+                    setTimeout(() => this.sendHeartbeat(), 30000); // Every 30 seconds
+                }
+            }
+
+            sendMessage(message) {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify(message));
+                } else {
+                    this.log('Cannot send message: WebSocket not connected', 'ERROR');
+                }
+            }
+
+            async startAudio() {
+                try {
+                    this.log('Starting audio capture...');
+                    this.mediaStream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
+                            sampleRate: 16000
+                        }
+                    });
+
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+                    this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+                    this.processor.onaudioprocess = (event) => {
+                        if (this.isRecording) {
+                            this.processAudioData(event.inputBuffer);
+                        }
+                    };
+
+                    source.connect(this.processor);
+                    this.processor.connect(this.audioContext.destination);
+
+                    this.isRecording = true;
+                    this.updateStatus('audio', 'Recording', 'connected');
+                    this.updateButtons();
+                    this.log('Audio capture started');
+
+                } catch (error) {
+                    this.log(`Failed to start audio: ${error.message}`, 'ERROR');
+                    this.updateStatus('audio', 'Error', 'error');
+                    this.stats.errors++;
+                    this.updateStats();
+                }
+            }
+
+            processAudioData(inputBuffer) {
+                const audioData = inputBuffer.getChannelData(0);
+                
+                // Calculate audio level for visualization
+                let sum = 0;
+                for (let i = 0; i < audioData.length; i++) {
+                    sum += audioData[i] * audioData[i];
+                }
+                const rms = Math.sqrt(sum / audioData.length);
+                const level = Math.min(100, rms * 1000);
+                
+                document.getElementById('audioLevelBar').style.width = `${level}%`;
+                document.getElementById('audioLevelText').textContent = `${Math.round(level)}%`;
+
+                // Send audio chunk if level is above threshold
+                if (level > 5) {
+                    this.sendAudioChunk(audioData);
+                }
+            }
+
+            sendAudioChunk(audioData) {
+                try {
+                    // Convert Float32Array to base64
+                    const buffer = new ArrayBuffer(audioData.length * 4);
+                    const view = new Float32Array(buffer);
+                    view.set(audioData);
+                    
+                    const bytes = new Uint8Array(buffer);
+                    let binary = '';
+                    for (let i = 0; i < bytes.length; i++) {
+                        binary += String.fromCharCode(bytes[i]);
+                    }
+                    const base64 = btoa(binary);
+
+                    this.sendMessage({
+                        type: 'audio_chunk',
+                        callId: 'test-call',
+                        timestamp: Date.now(),
+                        data: {
+                            id: `chunk-${this.sequenceNumber}`,
+                            callId: 'test-call',
+                            timestamp: Date.now(),
+                            audioData: base64,
+                            sequenceNumber: this.sequenceNumber++,
+                            sampleRate: this.audioContext.sampleRate,
+                            channels: 1,
+                            format: 'pcm'
+                        }
+                    });
+
+                    this.updateStatus('processing', 'Processing Audio...', 'connecting');
+
+                } catch (error) {
+                    this.log(`Failed to send audio chunk: ${error.message}`, 'ERROR');
+                    this.stats.errors++;
+                    this.updateStats();
+                }
+            }
+
+            stopAudio() {
+                this.isRecording = false;
+                
+                if (this.mediaStream) {
+                    this.mediaStream.getTracks().forEach(track => track.stop());
+                    this.mediaStream = null;
+                }
+                
+                if (this.processor) {
+                    this.processor.disconnect();
+                    this.processor = null;
+                }
+                
+                if (this.audioContext) {
+                    this.audioContext.close();
+                    this.audioContext = null;
+                }
+                
+                document.getElementById('audioLevelBar').style.width = '0%';
+                document.getElementById('audioLevelText').textContent = '0%';
+                
+                this.updateStatus('audio', 'Stopped', '');
+                this.updateStatus('processing', 'Idle', '');
+                this.updateButtons();
+                this.log('Audio capture stopped');
+            }
+
+            async enableWebRTC() {
+                // This would create a WebRTC peer connection
+                this.log('WebRTC functionality would be enabled here');
+                this.updateStatus('webrtc', 'Enabled', 'connected');
+            }
+
+            sendTestAudio() {
+                // Send a test audio chunk with generated data
+                const testAudioData = new Float32Array(4096);
+                for (let i = 0; i < testAudioData.length; i++) {
+                    testAudioData[i] = Math.sin(2 * Math.PI * 440 * i / 16000) * 0.1; // 440Hz tone
+                }
+                
+                this.log('Sending test audio chunk...');
+                this.sendAudioChunk(testAudioData);
+            }
+
+            disconnect() {
+                this.stopAudio();
+                
+                if (this.ws) {
+                    this.ws.close();
+                    this.ws = null;
+                }
+                
+                this.updateStatus('ws', 'Disconnected', '');
+                this.updateStatus('webrtc', 'Not Connected', '');
+                this.updateStatus('audio', 'Not Available', '');
+                this.updateStatus('processing', 'Idle', '');
+                
+                this.updateButtons();
+                this.log('Disconnected from server');
+            }
+
+            updateButtons() {
+                const connected = this.ws && this.ws.readyState === WebSocket.OPEN;
+                
+                document.getElementById('connectBtn').disabled = connected;
+                document.getElementById('disconnectBtn').disabled = !connected;
+                document.getElementById('startAudioBtn').disabled = !connected || this.isRecording;
+                document.getElementById('stopAudioBtn').disabled = !this.isRecording;
+                document.getElementById('enableWebRTCBtn').disabled = !connected;
+                document.getElementById('sendTestAudioBtn').disabled = !connected;
+            }
+        }
+
+        // Initialize client when page loads
+        const client = new RealtimeClient();
+    </script>
+</body>
+</html>

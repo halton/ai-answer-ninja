@@ -8,6 +8,8 @@ import { RedisService } from './services/redis';
 import { RateLimiterService } from './services/rateLimiter';
 import { MetricsService } from './services/metrics';
 import { HealthCheckService } from './services/healthCheck';
+import { RealtimeCommunicationManager } from './services/realtimeCommunication';
+import { ConnectionPool } from './services/connectionPool';
 import config from './config';
 import logger from './utils/logger';
 import { RealtimeProcessorError } from './types';
@@ -20,6 +22,8 @@ class RealtimeProcessorServer {
   private rateLimiter: RateLimiterService;
   private metricsService: MetricsService;
   private healthCheck: HealthCheckService;
+  private communicationManager: RealtimeCommunicationManager;
+  private connectionPool: ConnectionPool;
 
   constructor() {
     this.app = express();
@@ -34,12 +38,49 @@ class RealtimeProcessorServer {
       metrics: this.metricsService,
     });
     
+    // Initialize connection pool
+    this.connectionPool = new ConnectionPool({
+      maxConnections: config.server.maxConnections || 1000,
+      maxConnectionsPerUser: 5,
+      connectionTimeout: config.server.connectionTimeout || 30000,
+      idleTimeout: 300000,
+      cleanupInterval: 60000,
+      enableConnectionReuse: true,
+      priorityLevels: 3,
+    });
+    
     this.wsManager = new WebSocketManager({
       server: this.server,
       redis: this.redisService,
       rateLimiter: this.rateLimiter,
       metrics: this.metricsService,
       config: config,
+    });
+    
+    // Initialize real-time communication manager
+    this.communicationManager = new RealtimeCommunicationManager({
+      websocket: {
+        server: this.server,
+        maxConnections: config.server.maxConnections || 1000,
+        heartbeatInterval: 30000,
+      },
+      webrtc: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+        ],
+        enableAudioProcessing: true,
+        bitrateLimit: 32000,
+      },
+      redis: config.redis,
+      processing: {
+        enableWebRTC: true,
+        fallbackToWebSocket: true,
+        preferredTransport: 'auto',
+      },
+    }, {
+      redis: this.redisService,
+      metrics: this.metricsService,
     });
 
     this.setupMiddleware();
@@ -138,6 +179,65 @@ class RealtimeProcessorServer {
         res.status(500).json({ error: 'Failed to retrieve connection stats' });
       }
     });
+    
+    // Real-time communication session stats
+    this.app.get('/sessions', async (req, res) => {
+      try {
+        const sessions = await this.communicationManager.getSessionStats();
+        res.json(sessions);
+      } catch (error) {
+        logger.error({ error }, 'Failed to retrieve session stats');
+        res.status(500).json({ error: 'Failed to retrieve session stats' });
+      }
+    });
+    
+    // Connection pool stats
+    this.app.get('/pool', async (req, res) => {
+      try {
+        const poolStats = this.connectionPool.getPoolStats();
+        res.json(poolStats);
+      } catch (error) {
+        logger.error({ error }, 'Failed to retrieve pool stats');
+        res.status(500).json({ error: 'Failed to retrieve pool stats' });
+      }
+    });
+    
+    // Get specific session
+    this.app.get('/sessions/:sessionId', async (req, res) => {
+      try {
+        const { sessionId } = req.params;
+        const session = await this.communicationManager.getSession(sessionId);
+        
+        if (!session) {
+          return res.status(404).json({ error: 'Session not found' });
+        }
+        
+        res.json(session);
+      } catch (error) {
+        logger.error({ error, sessionId: req.params.sessionId }, 'Failed to get session');
+        res.status(500).json({ error: 'Failed to get session' });
+      }
+    });
+    
+    // Terminate session
+    this.app.delete('/sessions/call/:callId', async (req, res) => {
+      try {
+        const { callId } = req.params;
+        const terminated = await this.communicationManager.terminateSessionByCallId(
+          callId,
+          'manual_termination'
+        );
+        
+        if (!terminated) {
+          return res.status(404).json({ error: 'Session not found' });
+        }
+        
+        res.json({ success: true, message: 'Session terminated' });
+      } catch (error) {
+        logger.error({ error, callId: req.params.callId }, 'Failed to terminate session');
+        res.status(500).json({ error: 'Failed to terminate session' });
+      }
+    });
 
     // Start processing endpoint (for debugging/testing)
     this.app.post('/process/audio', async (req, res) => {
@@ -189,6 +289,10 @@ class RealtimeProcessorServer {
           health: 'GET /health',
           metrics: 'GET /metrics',
           connections: 'GET /connections',
+          sessions: 'GET /sessions',
+          pool: 'GET /pool',
+          sessionById: 'GET /sessions/:sessionId',
+          terminateSession: 'DELETE /sessions/call/:callId',
           processAudio: 'POST /process/audio',
           processStatus: 'GET /process/status/:callId',
           websocket: 'WS /realtime/conversation',
@@ -275,8 +379,14 @@ class RealtimeProcessorServer {
       await this.redisService.connect();
       await this.metricsService.start();
       
+      // Initialize connection pool
+      await this.connectionPool.initialize();
+      
       // Start WebSocket server
       await this.wsManager.initialize();
+      
+      // Initialize real-time communication manager
+      await this.communicationManager.initialize();
 
       // Start HTTP server
       this.server.listen(config.server.port, config.server.host, () => {
@@ -307,6 +417,12 @@ class RealtimeProcessorServer {
 
       // Close WebSocket connections
       await this.wsManager.shutdown();
+      
+      // Shutdown real-time communication manager
+      await this.communicationManager.shutdown();
+      
+      // Shutdown connection pool
+      await this.connectionPool.shutdown();
 
       // Stop services
       await this.metricsService.stop();
