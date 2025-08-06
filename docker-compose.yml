@@ -1,0 +1,380 @@
+version: '3.8'
+
+services:
+  # ===========================================
+  # 核心业务服务 (Core Services)
+  # ===========================================
+  
+  phone-gateway:
+    build:
+      context: ./services/phone-gateway
+      dockerfile: Dockerfile
+    container_name: ai-ninja-phone-gateway
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - AZURE_COMMUNICATION_CONNECTION_STRING=${AZURE_COMMUNICATION_CONNECTION_STRING}
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/ai_ninja
+      - USER_MANAGEMENT_URL=http://user-management:3005
+      - WHITELIST_SERVICE_URL=http://smart-whitelist:3006
+    depends_on:
+      - postgres
+      - redis
+      - user-management
+      - smart-whitelist
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs/phone-gateway:/app/logs
+
+  realtime-processor:
+    build:
+      context: ./services/realtime-processor
+      dockerfile: Dockerfile
+    container_name: ai-ninja-realtime-processor
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - AZURE_SPEECH_KEY=${AZURE_SPEECH_KEY}
+      - AZURE_SPEECH_REGION=${AZURE_SPEECH_REGION}
+      - AZURE_OPENAI_KEY=${AZURE_OPENAI_KEY}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/ai_ninja
+      - CONVERSATION_ENGINE_URL=http://conversation-engine:3003
+    depends_on:
+      - postgres
+      - redis
+      - conversation-engine
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs/realtime-processor:/app/logs
+      - ./temp/audio:/app/temp/audio
+
+  conversation-engine:
+    build:
+      context: ./services/conversation-engine
+      dockerfile: Dockerfile
+    container_name: ai-ninja-conversation-engine
+    ports:
+      - "3003:3003"
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - AZURE_OPENAI_KEY=${AZURE_OPENAI_KEY}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/ai_ninja
+      - PROFILE_ANALYTICS_URL=http://profile-analytics:3004
+    depends_on:
+      - postgres
+      - redis
+      - profile-analytics
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs/conversation-engine:/app/logs
+
+  profile-analytics:
+    build:
+      context: ./services/profile-analytics
+      dockerfile: Dockerfile
+    container_name: ai-ninja-profile-analytics
+    ports:
+      - "3004:3004"
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - AZURE_TEXT_ANALYTICS_KEY=${AZURE_TEXT_ANALYTICS_KEY}
+      - AZURE_TEXT_ANALYTICS_ENDPOINT=${AZURE_TEXT_ANALYTICS_ENDPOINT}
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/ai_ninja
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs/profile-analytics:/app/logs
+
+  # ===========================================
+  # 支撑服务 (Support Services)
+  # ===========================================
+
+  user-management:
+    build:
+      context: ./services/user-management
+      dockerfile: Dockerfile
+    container_name: ai-ninja-user-management
+    ports:
+      - "3005:3005"
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-1h}
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/ai_ninja
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs/user-management:/app/logs
+
+  smart-whitelist:
+    build:
+      context: ./services/smart-whitelist
+      dockerfile: Dockerfile
+    container_name: ai-ninja-smart-whitelist
+    ports:
+      - "3006:3006"
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/ai_ninja
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs/smart-whitelist:/app/logs
+
+  # ===========================================
+  # 平台服务 (Platform Services)
+  # ===========================================
+
+  configuration:
+    build:
+      context: ./services/configuration
+      dockerfile: Dockerfile
+    container_name: ai-ninja-configuration
+    ports:
+      - "3007:3007"
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/ai_ninja
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs/configuration:/app/logs
+
+  storage:
+    build:
+      context: ./services/storage
+      dockerfile: Dockerfile
+    container_name: ai-ninja-storage
+    ports:
+      - "3008:3008"
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/ai_ninja
+      - AZURE_STORAGE_CONNECTION_STRING=${AZURE_STORAGE_CONNECTION_STRING}
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3008/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs/storage:/app/logs
+      - ./data/storage:/app/data
+
+  monitoring:
+    build:
+      context: ./services/monitoring
+      dockerfile: Dockerfile
+    container_name: ai-ninja-monitoring
+    ports:
+      - "3009:3009"
+      - "9090:9090"  # Prometheus
+      - "3000:3000"  # Grafana
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/ai_ninja
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL}
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3009/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs/monitoring:/app/logs
+      - ./config/prometheus:/etc/prometheus
+      - ./config/grafana:/etc/grafana
+      - prometheus_data:/prometheus
+      - grafana_data:/var/lib/grafana
+
+  # ===========================================
+  # 数据存储服务 (Data Layer)
+  # ===========================================
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai-ninja-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=ai_ninja
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_ninja"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+      - ./database/backups:/backups
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.max=10000
+      -c pg_stat_statements.track=all
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai-ninja-redis
+    ports:
+      - "6379:6379"
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - redis_data:/data
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+
+  # ===========================================
+  # 反向代理和负载均衡
+  # ===========================================
+
+  nginx:
+    image: nginx:alpine
+    container_name: ai-ninja-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - phone-gateway
+      - realtime-processor
+      - conversation-engine
+      - profile-analytics
+      - user-management
+      - smart-whitelist
+      - configuration
+      - storage
+      - monitoring
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./config/nginx/conf.d:/etc/nginx/conf.d
+      - ./logs/nginx:/var/log/nginx
+      - ./ssl:/etc/nginx/ssl
+
+networks:
+  ai-ninja-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local

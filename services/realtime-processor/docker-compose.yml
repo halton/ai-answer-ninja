@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  realtime-processor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: realtime-processor-dev
+    ports:
+      - "3002:3002"
+      - "9229:9229" # Debug port
+    environment:
+      - NODE_ENV=development
+      - PORT=3002
+      - HOST=0.0.0.0
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=debug
+      - METRICS_ENABLED=true
+      - PERFORMANCE_MONITORING=true
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - ./logs:/app/logs
+      - ./storage:/app/storage
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - realtime-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "./healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    container_name: realtime-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - realtime-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Monitoring services for development
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: realtime-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - realtime-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: realtime-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - realtime-network
+    restart: unless-stopped
+
+  # Load testing service
+  k6:
+    image: grafana/k6:latest
+    container_name: realtime-k6
+    volumes:
+      - ./tests/load:/scripts
+    networks:
+      - realtime-network
+    profiles:
+      - testing
+
+networks:
+  realtime-network:
+    driver: bridge
+    name: realtime-network
+
+volumes:
+  redis_data:
+    name: realtime-redis-data
+  prometheus_data:
+    name: realtime-prometheus-data
+  grafana_data:
+    name: realtime-grafana-data

@@ -1,0 +1,346 @@
+// AI Answer Ninja - User Management Database Schema
+// Optimized for high performance with security best practices
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// Core User Model
+// ==========================================
+
+model User {
+  id                  String    @id @default(uuid())
+  phoneNumber         String    @unique @map("phone_number")
+  name                String
+  email               String?   @unique
+  passwordHash        String    @map("password_hash")
+  personality         String    @default("polite")
+  voiceProfileId      String?   @map("voice_profile_id")
+  languagePreference  String    @default("zh-CN") @map("language_preference")
+  timezone            String    @default("Asia/Shanghai")
+  maxCallDuration     Int       @default(300) @map("max_call_duration")
+  preferences         Json      @default("{}")
+  role                UserRole  @default(USER)
+  
+  // Status fields
+  isActive            Boolean   @default(true) @map("is_active")
+  isEmailVerified     Boolean   @default(false) @map("is_email_verified")
+  isPhoneVerified     Boolean   @default(false) @map("is_phone_verified")
+  isLocked            Boolean   @default(false) @map("is_locked")
+  lockReason          String?   @map("lock_reason")
+  
+  // Login tracking
+  loginAttempts       Int       @default(0) @map("login_attempts")
+  lastLoginAt         DateTime? @map("last_login_at")
+  lastLoginIp         String?   @map("last_login_ip")
+  passwordChangedAt   DateTime? @map("password_changed_at")
+  
+  // Timestamps
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  
+  // Relations
+  refreshTokens       RefreshToken[]
+  sessions            UserSession[]
+  mfaSettings         MFASettings?
+  userConfigs         UserConfig[]
+  auditLogs           AuditLog[]
+  passwordResets      PasswordReset[]
+  emailVerifications  EmailVerification[]
+  whitelists          SmartWhitelist[]
+  
+  @@map("users")
+  @@index([phoneNumber])
+  @@index([email])
+  @@index([isActive, role])
+  @@index([lastLoginAt])
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  MODERATOR
+  SYSTEM
+}
+
+// ==========================================
+// Authentication Models
+// ==========================================
+
+model RefreshToken {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  token       String    @unique
+  deviceInfo  Json?     @map("device_info")
+  ipAddress   String?   @map("ip_address")
+  userAgent   String?   @map("user_agent")
+  isRevoked   Boolean   @default(false) @map("is_revoked")
+  revokedAt   DateTime? @map("revoked_at")
+  revokedBy   String?   @map("revoked_by")
+  expiresAt   DateTime  @map("expires_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("refresh_tokens")
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@index([isRevoked, expiresAt])
+}
+
+model UserSession {
+  id              String    @id @default(uuid())
+  userId          String    @map("user_id")
+  sessionId       String    @unique @map("session_id")
+  deviceInfo      Json      @map("device_info")
+  ipAddress       String    @map("ip_address")
+  userAgent       String    @map("user_agent")
+  isActive        Boolean   @default(true) @map("is_active")
+  lastActivityAt  DateTime  @default(now()) @map("last_activity_at")
+  expiresAt       DateTime  @map("expires_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("user_sessions")
+  @@index([userId])
+  @@index([sessionId])
+  @@index([isActive, expiresAt])
+  @@index([lastActivityAt])
+}
+
+// ==========================================
+// MFA Models
+// ==========================================
+
+model MFASettings {
+  id            String    @id @default(uuid())
+  userId        String    @unique @map("user_id")
+  isEnabled     Boolean   @default(false) @map("is_enabled")
+  secret        String?   // Encrypted TOTP secret
+  backupCodes   Json      @default("[]") @map("backup_codes") // Encrypted backup codes
+  method        MFAMethod @default(TOTP)
+  lastUsedAt    DateTime? @map("last_used_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("mfa_settings")
+  @@index([userId])
+  @@index([isEnabled])
+}
+
+enum MFAMethod {
+  TOTP
+  SMS
+  EMAIL
+}
+
+// ==========================================
+// Configuration Models
+// ==========================================
+
+model GlobalConfig {
+  id              String      @id @default(uuid())
+  key             String      @unique
+  value           Json
+  type            ConfigType  @default(SYSTEM)
+  description     String?
+  isActive        Boolean     @default(true) @map("is_active")
+  isSensitive     Boolean     @default(false) @map("is_sensitive")
+  requiresRestart Boolean     @default(false) @map("requires_restart")
+  version         Int         @default(1)
+  lastModifiedBy  String?     @map("last_modified_by")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  
+  @@map("global_configs")
+  @@index([key, isActive])
+  @@index([type, isActive])
+}
+
+model UserConfig {
+  id                  String    @id @default(uuid())
+  userId              String    @map("user_id")
+  key                 String
+  value               Json
+  inheritsGlobal      Boolean   @default(false) @map("inherits_global")
+  overrideReason      String?   @map("override_reason")
+  autoLearned         Boolean   @default(false) @map("auto_learned")
+  learningConfidence  Float?    @map("learning_confidence")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, key])
+  @@map("user_configs")
+  @@index([userId])
+  @@index([key])
+  @@index([autoLearned])
+}
+
+enum ConfigType {
+  SYSTEM
+  FEATURE
+  EXPERIMENT
+  SECURITY
+}
+
+// ==========================================
+// Audit and Security Models
+// ==========================================
+
+model AuditLog {
+  id          String      @id @default(uuid())
+  userId      String?     @map("user_id")
+  action      AuditAction
+  resource    String
+  details     Json        @default("{}")
+  ipAddress   String      @map("ip_address")
+  userAgent   String      @map("user_agent")
+  success     Boolean     @default(true)
+  timestamp   DateTime    @default(now())
+  
+  user        User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  @@map("audit_logs")
+  @@index([userId])
+  @@index([action])
+  @@index([timestamp])
+  @@index([success])
+  @@index([resource])
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  REGISTER
+  PASSWORD_CHANGE
+  PASSWORD_RESET
+  MFA_ENABLE
+  MFA_DISABLE
+  PROFILE_UPDATE
+  PERMISSIONS_CHANGE
+  ACCOUNT_LOCK
+  ACCOUNT_UNLOCK
+  DATA_EXPORT
+  DATA_DELETION
+  CONFIG_CHANGE
+  WHITELIST_UPDATE
+}
+
+model SecurityEvent {
+  id          String              @id @default(uuid())
+  type        SecurityEventType
+  severity    SecuritySeverity
+  userId      String?             @map("user_id")
+  details     Json                @default("{}")
+  resolved    Boolean             @default(false)
+  resolvedAt  DateTime?           @map("resolved_at")
+  resolvedBy  String?             @map("resolved_by")
+  timestamp   DateTime            @default(now())
+  
+  @@map("security_events")
+  @@index([type])
+  @@index([severity])
+  @@index([userId])
+  @@index([timestamp])
+  @@index([resolved])
+}
+
+enum SecurityEventType {
+  FAILED_LOGIN
+  ACCOUNT_LOCKED
+  SUSPICIOUS_ACTIVITY
+  PASSWORD_BREACH
+  MFA_BYPASS_ATTEMPT
+  DEVICE_CHANGE
+  LOCATION_CHANGE
+  PRIVILEGE_ESCALATION
+}
+
+enum SecuritySeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// ==========================================
+// Email and Password Reset Models
+// ==========================================
+
+model PasswordReset {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  token     String    @unique
+  expiresAt DateTime  @map("expires_at")
+  isUsed    Boolean   @default(false) @map("is_used")
+  usedAt    DateTime? @map("used_at")
+  ipAddress String?   @map("ip_address")
+  userAgent String?   @map("user_agent")
+  createdAt DateTime  @default(now()) @map("created_at")
+  
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("password_resets")
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@index([isUsed])
+}
+
+model EmailVerification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  email     String
+  token     String    @unique
+  expiresAt DateTime  @map("expires_at")
+  isUsed    Boolean   @default(false) @map("is_used")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("email_verifications")
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@index([isUsed])
+}
+
+// ==========================================
+// Whitelist Model (from existing schema)
+// ==========================================
+
+model SmartWhitelist {
+  id              String    @id @default(uuid())
+  userId          String    @map("user_id")
+  contactPhone    String    @map("contact_phone")
+  contactName     String?   @map("contact_name")
+  whitelistType   String    @default("manual") @map("whitelist_type")
+  confidenceScore Float     @default(1.0) @map("confidence_score")
+  isActive        Boolean   @default(true) @map("is_active")
+  expiresAt       DateTime? @map("expires_at")
+  hitCount        Int       @default(0) @map("hit_count")
+  lastHitAt       DateTime? @map("last_hit_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, contactPhone])
+  @@map("smart_whitelists")
+  @@index([userId, isActive])
+  @@index([contactPhone])
+  @@index([expiresAt])
+}

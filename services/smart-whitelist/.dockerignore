@@ -1,0 +1,38 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# Tests
+*_test.go
+test/
+tests/
+
+# Development
+.env
+.env.local
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/
+
+# Build artifacts
+bin/
+build/
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies (will be downloaded during build)
+vendor/
+
+# Temporary files
+tmp/
+temp/

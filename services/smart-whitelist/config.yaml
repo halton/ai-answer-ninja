@@ -1,0 +1,63 @@
+server:
+  port: 3006
+  host: "0.0.0.0"
+  read_timeout: "5s"
+  write_timeout: "10s"
+  idle_timeout: "60s"
+  shutdown_timeout: "10s"
+  max_request_size: 1048576
+
+database:
+  host: "localhost"
+  port: 5432
+  database: "ai_answer_ninja"
+  username: "postgres"
+  password: ""
+  ssl_mode: "prefer"
+  max_connections: 25
+  max_idle_conns: 5
+  conn_max_lifetime: "1h"
+  conn_max_idle_time: "10m"
+  query_timeout: "30s"
+
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  database: 1
+  pool_size: 20
+  min_idle_conns: 5
+  max_retries: 3
+  dial_timeout: "5s"
+  read_timeout: "2s"
+  write_timeout: "2s"
+  idle_timeout: "5m"
+  whitelist_cache_ttl: "10m"
+  profile_cache_ttl: "2h"
+  statistics_cache_ttl: "5m"
+
+ml:
+  enabled: true
+  model_update_interval: "1h"
+  min_training_samples: 100
+  confidence_threshold: 0.7
+  auto_learn_threshold: 0.85
+  feature_extraction_workers: 4
+  model_path: "./models"
+
+metrics:
+  enabled: true
+  path: "/metrics"
+  histogram_buckets: [0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+
+cleanup:
+  enabled: true
+  interval: "1h"
+  expired_whitelist_ttl: "168h" # 7 days
+  inactive_profile_cleanup: "4320h" # 180 days
+  batch_size: 1000
+
+logging:
+  level: "info"
+  development: false
+  encoding: "json"

@@ -1,0 +1,183 @@
+# Docker Compose Override for Development
+# This file automatically merges with docker-compose.yml in development
+
+version: '3.8'
+
+services:
+  # ===========================================
+  # 开发环境特定配置
+  # ===========================================
+
+  phone-gateway:
+    build:
+      target: development  # 多阶段构建的开发目标
+    volumes:
+      - ./services/phone-gateway/src:/app/src
+      - /app/node_modules  # 防止本地node_modules覆盖容器内的
+    environment:
+      - DEBUG=ai-ninja:*
+      - LOG_LEVEL=debug
+    command: npm run dev  # 使用nodemon热重载
+
+  realtime-processor:
+    build:
+      target: development
+    volumes:
+      - ./services/realtime-processor/src:/app/src
+      - /app/node_modules
+    environment:
+      - DEBUG=ai-ninja:*
+      - LOG_LEVEL=debug
+    command: npm run dev
+
+  conversation-engine:
+    build:
+      target: development
+    volumes:
+      - ./services/conversation-engine/src:/app/src
+      - /app/node_modules
+    environment:
+      - DEBUG=ai-ninja:*
+      - LOG_LEVEL=debug
+    command: npm run dev
+
+  profile-analytics:
+    build:
+      target: development
+    volumes:
+      - ./services/profile-analytics/src:/app/src
+      - /app/node_modules
+    environment:
+      - DEBUG=ai-ninja:*
+      - LOG_LEVEL=debug
+    command: npm run dev
+
+  user-management:
+    build:
+      target: development
+    volumes:
+      - ./services/user-management/src:/app/src
+      - /app/node_modules
+    environment:
+      - DEBUG=ai-ninja:*
+      - LOG_LEVEL=debug
+    command: npm run dev
+
+  smart-whitelist:
+    build:
+      target: development
+    volumes:
+      - ./services/smart-whitelist/src:/app/src
+      - /app/node_modules
+    environment:
+      - DEBUG=ai-ninja:*
+      - LOG_LEVEL=debug
+    command: npm run dev
+
+  configuration:
+    build:
+      target: development
+    volumes:
+      - ./services/configuration/src:/app/src
+      - /app/node_modules
+    environment:
+      - DEBUG=ai-ninja:*
+      - LOG_LEVEL=debug
+    command: npm run dev
+
+  storage:
+    build:
+      target: development
+    volumes:
+      - ./services/storage/src:/app/src
+      - /app/node_modules
+    environment:
+      - DEBUG=ai-ninja:*
+      - LOG_LEVEL=debug
+    command: npm run dev
+
+  monitoring:
+    build:
+      target: development
+    volumes:
+      - ./services/monitoring/src:/app/src
+      - /app/node_modules
+    environment:
+      - DEBUG=ai-ninja:*
+      - LOG_LEVEL=debug
+    command: npm run dev
+
+  # ===========================================
+  # 开发工具和调试服务
+  # ===========================================
+
+  # PostgreSQL管理界面
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ai-ninja-pgadmin
+    ports:
+      - "8080:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@ai-ninja.local
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD:-admin123}
+    networks:
+      - ai-ninja-network
+    depends_on:
+      - postgres
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+  # Redis管理界面
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: ai-ninja-redis-commander
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=redis:redis:6379
+    networks:
+      - ai-ninja-network
+    depends_on:
+      - redis
+
+  # 日志聚合和查看
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    container_name: ai-ninja-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    networks:
+      - ai-ninja-network
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.8.0
+    container_name: ai-ninja-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    networks:
+      - ai-ninja-network
+    depends_on:
+      - elasticsearch
+
+  # API文档服务
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    container_name: ai-ninja-swagger
+    ports:
+      - "8082:8080"
+    environment:
+      - SWAGGER_JSON_URL=http://localhost/api/docs/swagger.json
+    networks:
+      - ai-ninja-network
+
+volumes:
+  pgadmin_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
