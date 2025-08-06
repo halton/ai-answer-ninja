@@ -14,7 +14,6 @@ import (
 	"gonum.org/v1/gonum/mat"
 
 	"smart-whitelist/internal/config"
-	"smart-whitelist/internal/models"
 )
 
 // ContactClassifier provides machine learning-based contact classification
@@ -82,7 +81,7 @@ func (c *ContactClassifier) ClassifyContact(
 	defer func() {
 		c.logger.Debug("contact classification completed",
 			zap.Duration("duration", time.Since(start)),
-			zap.String("phone_number", c.hashPhoneNumber(phoneNumber)))
+			zap.String("phone_number", c.HashPhoneNumber(phoneNumber)))
 	}()
 	
 	// Extract features
@@ -93,7 +92,7 @@ func (c *ContactClassifier) ClassifyContact(
 	
 	// Classify using the model
 	result := c.classify(featureVector, features)
-	result.PhoneHash = c.hashPhoneNumber(phoneNumber)
+	result.PhoneHash = c.HashPhoneNumber(phoneNumber)
 	result.ClassificationTime = time.Since(start)
 	
 	return result, nil
@@ -204,7 +203,7 @@ func (c *ContactClassifier) LearnFromFeedback(
 	}
 	
 	c.logger.Debug("learned from feedback",
-		zap.String("phone_hash", c.hashPhoneNumber(phoneNumber)),
+		zap.String("phone_hash", c.HashPhoneNumber(phoneNumber)),
 		zap.Bool("is_spam", isSpam),
 		zap.String("spam_type", spamType),
 		zap.Float64("confidence", confidence),
@@ -468,8 +467,8 @@ func (c *ContactClassifier) estimateAccuracy() float64 {
 	return accuracy
 }
 
-// hashPhoneNumber creates a privacy-preserving hash of the phone number
-func (c *ContactClassifier) hashPhoneNumber(phoneNumber string) string {
+// HashPhoneNumber creates a privacy-preserving hash of the phone number
+func (c *ContactClassifier) HashPhoneNumber(phoneNumber string) string {
 	hash := sha256.Sum256([]byte(phoneNumber))
 	return hex.EncodeToString(hash[:])
 }

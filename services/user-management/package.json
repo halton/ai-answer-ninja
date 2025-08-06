@@ -36,7 +36,6 @@
     "speakeasy": "^2.0.0",
     "qrcode": "^1.5.3",
     "redis": "^4.6.12",
-    "crypto": "^1.0.1",
     "argon2": "^0.31.2",
     "zxcvbn": "^4.4.2",
     "express-validator": "^7.0.1",

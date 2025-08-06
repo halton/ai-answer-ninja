@@ -405,7 +405,7 @@ func (s *SmartWhitelistService) recordEvaluation(req *models.EvaluationRequest, 
 // hashPhone creates a privacy-preserving hash of a phone number
 func (s *SmartWhitelistService) hashPhone(phone string) string {
 	// Use the same hashing as the ML classifier
-	return s.classifier.hashPhoneNumber(phone)
+	return s.classifier.HashPhoneNumber(phone)
 }
 
 // Close gracefully shuts down the service

@@ -237,6 +237,119 @@ func (r *SpamProfileRepository) GetTopSpamCategories(ctx context.Context, limit 
 	return categories, nil
 }
 
+// GetByPhoneHash retrieves a spam profile by phone hash
+func (r *SpamProfileRepository) GetByPhoneHash(ctx context.Context, phoneHash string) (*models.SpamProfile, error) {
+	query := `
+		SELECT id, phone_hash, spam_category, risk_score, confidence_level,
+		       feature_vector, behavioral_patterns, total_reports, successful_blocks,
+		       false_positive_count, first_reported, last_activity, last_updated, created_at
+		FROM spam_profiles
+		WHERE phone_hash = $1`
+
+	var profile models.SpamProfile
+	err := r.db.QueryRow(ctx, query, phoneHash).Scan(
+		&profile.ID, &profile.PhoneHash, &profile.SpamCategory, &profile.RiskScore,
+		&profile.ConfidenceLevel, &profile.FeatureVector, &profile.BehavioralPatterns,
+		&profile.TotalReports, &profile.SuccessfulBlocks, &profile.FalsePositiveCount,
+		&profile.FirstReported, &profile.LastActivity, &profile.LastUpdated, &profile.CreatedAt,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		r.logger.Error("failed to get spam profile by phone hash",
+			zap.Error(err),
+			zap.String("phone_hash", phoneHash))
+		return nil, fmt.Errorf("failed to get spam profile: %w", err)
+	}
+
+	return &profile, nil
+}
+
+// Create creates a new spam profile
+func (r *SpamProfileRepository) Create(ctx context.Context, profile *models.SpamProfile) (*models.SpamProfile, error) {
+	now := time.Now()
+	if profile.ID == uuid.Nil {
+		profile.ID = uuid.New()
+	}
+	if profile.FirstReported.IsZero() {
+		profile.FirstReported = now
+	}
+	if profile.LastActivity.IsZero() {
+		profile.LastActivity = now
+	}
+	if profile.LastUpdated.IsZero() {
+		profile.LastUpdated = now
+	}
+	if profile.CreatedAt.IsZero() {
+		profile.CreatedAt = now
+	}
+
+	query := `
+		INSERT INTO spam_profiles (
+			id, phone_hash, spam_category, risk_score, confidence_level,
+			feature_vector, behavioral_patterns, total_reports, successful_blocks,
+			false_positive_count, first_reported, last_activity, last_updated, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		RETURNING id, first_reported, last_activity, last_updated, created_at`
+
+	err := r.db.QueryRow(ctx, query,
+		profile.ID, profile.PhoneHash, profile.SpamCategory, profile.RiskScore,
+		profile.ConfidenceLevel, profile.FeatureVector, profile.BehavioralPatterns,
+		profile.TotalReports, profile.SuccessfulBlocks, profile.FalsePositiveCount,
+		profile.FirstReported, profile.LastActivity, profile.LastUpdated, profile.CreatedAt,
+	).Scan(&profile.ID, &profile.FirstReported, &profile.LastActivity, &profile.LastUpdated, &profile.CreatedAt)
+
+	if err != nil {
+		r.logger.Error("failed to create spam profile",
+			zap.Error(err),
+			zap.String("phone_hash", profile.PhoneHash))
+		return nil, fmt.Errorf("failed to create spam profile: %w", err)
+	}
+
+	return profile, nil
+}
+
+// Update updates an existing spam profile
+func (r *SpamProfileRepository) Update(ctx context.Context, id uuid.UUID, profile *models.SpamProfile) error {
+	profile.LastUpdated = time.Now()
+
+	query := `
+		UPDATE spam_profiles
+		SET spam_category = $2,
+		    risk_score = $3,
+		    confidence_level = $4,
+		    feature_vector = $5,
+		    behavioral_patterns = $6,
+		    total_reports = $7,
+		    successful_blocks = $8,
+		    false_positive_count = $9,
+		    last_activity = $10,
+		    last_updated = $11
+		WHERE id = $1`
+
+	result, err := r.db.Exec(ctx, query, id,
+		profile.SpamCategory, profile.RiskScore, profile.ConfidenceLevel,
+		profile.FeatureVector, profile.BehavioralPatterns,
+		profile.TotalReports, profile.SuccessfulBlocks, profile.FalsePositiveCount,
+		profile.LastActivity, profile.LastUpdated,
+	)
+
+	if err != nil {
+		r.logger.Error("failed to update spam profile",
+			zap.Error(err),
+			zap.String("profile_id", id.String()))
+		return fmt.Errorf("failed to update spam profile: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
 // CleanupInactive removes inactive spam profiles older than the specified duration
 func (r *SpamProfileRepository) CleanupInactive(ctx context.Context, inactiveDuration time.Duration, batchSize int) (int, error) {
 	query := `

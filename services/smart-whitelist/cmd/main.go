@@ -66,14 +66,14 @@ func main() {
 }
 
 func NewLogger(cfg *config.Config) (*zap.Logger, error) {
-	if cfg.Environment == "production" {
+	if !cfg.Logging.Development {
 		return zap.NewProduction()
 	}
 	return zap.NewDevelopment()
 }
 
 func NewGinEngine(cfg *config.Config) *gin.Engine {
-	if cfg.Environment == "production" {
+	if !cfg.Logging.Development {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
