@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-ninja
+  labels:
+    name: ai-ninja
+    app.kubernetes.io/name: ai-answer-ninja
+    app.kubernetes.io/version: "1.0.0"
+    environment: production
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ai-ninja-quota
+  namespace: ai-ninja
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: 20Gi
+    limits.cpu: "20"
+    limits.memory: 40Gi
+    persistentvolumeclaims: "10"
+    services: "15"
+    secrets: "10"
+    configmaps: "10"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ai-ninja-limits
+  namespace: ai-ninja
+spec:
+  limits:
+  - default:
+      cpu: "1"
+      memory: "2Gi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "256Mi"
+    type: Container

@@ -1,0 +1,252 @@
+# AI Answer Ninja - Horizontal Pod Autoscaler Configurations
+# Auto-scaling based on CPU, memory, and custom metrics
+
+---
+# Real-time Processor HPA (Critical Service - Aggressive Scaling)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: realtime-processor-hpa
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: realtime-processor
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  # CPU-based scaling
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60  # Scale up when CPU > 60%
+  # Memory-based scaling
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70  # Scale up when memory > 70%
+  # Custom metric: Request rate
+  - type: Pods
+    pods:
+      metric:
+        name: nginx_ingress_controller_requests_rate
+        selector:
+          matchLabels:
+            service: realtime-processor
+      target:
+        type: AverageValue
+        averageValue: "30"  # Scale when > 30 requests/sec per pod
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100  # Double replicas quickly
+        periodSeconds: 60
+      - type: Pods
+        value: 2    # Or add 2 pods
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5 min cooldown
+      policies:
+      - type: Percent
+        value: 50   # Reduce by 50% max
+        periodSeconds: 60
+
+---
+# Phone Gateway HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: phone-gateway-hpa
+  namespace: ai-ninja
+  labels:
+    app: phone-gateway
+    tier: core
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: phone-gateway
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+
+---
+# Conversation Engine HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: conversation-engine-hpa
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: conversation-engine
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 65
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 75
+  # Custom metric: AI processing queue depth
+  - type: Pods
+    pods:
+      metric:
+        name: ai_processing_queue_depth
+      target:
+        type: AverageValue
+        averageValue: "10"  # Scale when queue > 10 items per pod
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 180
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 33
+        periodSeconds: 120
+
+---
+# Profile Analytics HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: profile-analytics-hpa
+  namespace: ai-ninja
+  labels:
+    app: profile-analytics
+    tier: core
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: profile-analytics
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 300  # Slower scaling for analytics
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 180
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 300
+
+---
+# Nginx Ingress Controller HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-ingress-hpa
+  namespace: ai-ninja
+  labels:
+    app: nginx-ingress
+    tier: gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-ingress-controller
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  # Custom metric: Requests per second
+  - type: Object
+    object:
+      metric:
+        name: nginx_ingress_controller_requests_rate
+      describedObject:
+        apiVersion: v1
+        kind: Service
+        name: nginx-ingress-service
+      target:
+        type: Value
+        value: "1000"  # Scale when > 1000 RPS total
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 180

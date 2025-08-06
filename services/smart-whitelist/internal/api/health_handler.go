@@ -43,7 +43,7 @@ func (h *HealthHandler) Health(c *gin.Context) {
 		"status":    "healthy",
 		"service":   "smart-whitelist",
 		"version":   "1.0.0",
-		"timestamp": time.Now().ISO8601(),
+		"timestamp": time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -120,7 +120,7 @@ func (h *HealthHandler) Ready(c *gin.Context) {
 		"service":          "smart-whitelist",
 		"checks":           checks,
 		"total_duration":   time.Since(start).Milliseconds(),
-		"timestamp":        time.Now().ISO8601(),
+		"timestamp":        time.Now().Format(time.RFC3339),
 	}
 
 	c.JSON(status, response)
@@ -133,6 +133,6 @@ func (h *HealthHandler) Live(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":    "alive",
 		"service":   "smart-whitelist",
-		"timestamp": time.Now().ISO8601(),
+		"timestamp": time.Now().Format(time.RFC3339),
 	})
 }

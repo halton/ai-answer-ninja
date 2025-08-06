@@ -1,0 +1,315 @@
+# AI Answer Ninja - Nginx Ingress Configuration
+# Advanced ingress with SSL termination and path-based routing
+
+---
+# Nginx Ingress Controller Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-ingress-controller
+  namespace: ai-ninja
+  labels:
+    app: nginx-ingress
+    tier: gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-ingress
+  template:
+    metadata:
+      labels:
+        app: nginx-ingress
+        tier: gateway
+    spec:
+      serviceAccountName: nginx-ingress-service-account
+      containers:
+      - name: nginx-ingress
+        image: k8s.gcr.io/ingress-nginx/controller:v1.8.1
+        args:
+        - /nginx-ingress-controller
+        - --configmap=$(POD_NAMESPACE)/nginx-config
+        - --tcp-services-configmap=$(POD_NAMESPACE)/tcp-services
+        - --udp-services-configmap=$(POD_NAMESPACE)/udp-services
+        - --annotations-prefix=nginx.ingress.kubernetes.io
+        - --publish-service=$(POD_NAMESPACE)/nginx-ingress-service
+        - --v=2
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - containerPort: 80
+          name: http
+        - containerPort: 443
+          name: https
+        - containerPort: 8080
+          name: metrics
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 10254
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 10254
+            scheme: HTTP
+          periodSeconds: 1
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1"
+
+---
+# Service Account for Nginx Ingress
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nginx-ingress-service-account
+  namespace: ai-ninja
+
+---
+# ClusterRole for Nginx Ingress
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nginx-ingress-cluster-role
+rules:
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "update", "create"]
+- apiGroups: ["extensions", "networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["extensions", "networking.k8s.io"]
+  resources: ["ingresses/status"]
+  verbs: ["update"]
+
+---
+# ClusterRoleBinding for Nginx Ingress
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nginx-ingress-cluster-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: nginx-ingress-cluster-role
+subjects:
+- kind: ServiceAccount
+  name: nginx-ingress-service-account
+  namespace: ai-ninja
+
+---
+# Nginx Ingress Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-ingress-service
+  namespace: ai-ninja
+  labels:
+    app: nginx-ingress
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "false"
+spec:
+  selector:
+    app: nginx-ingress
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  - port: 443
+    targetPort: 443
+    name: https
+  type: LoadBalancer
+
+---
+# Main API Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-ninja-api-ingress
+  namespace: ai-ninja
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-rps: "5"
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - api.ai-ninja.com
+    secretName: ai-ninja-tls-secret
+  rules:
+  - host: api.ai-ninja.com
+    http:
+      paths:
+      # Phone Gateway Routes
+      - path: /api/v1/phone
+        pathType: Prefix
+        backend:
+          service:
+            name: phone-gateway-service
+            port:
+              number: 3001
+      
+      # Real-time Processor Routes (Priority/Critical)
+      - path: /api/v1/realtime
+        pathType: Prefix
+        backend:
+          service:
+            name: realtime-processor-service
+            port:
+              number: 3002
+      
+      # Conversation Engine Routes
+      - path: /api/v1/conversation
+        pathType: Prefix
+        backend:
+          service:
+            name: conversation-engine-service
+            port:
+              number: 3003
+      
+      # Analytics Routes
+      - path: /api/v1/analytics
+        pathType: Prefix
+        backend:
+          service:
+            name: profile-analytics-service
+            port:
+              number: 3004
+      
+      # User Management Routes
+      - path: /api/v1/(users|auth)
+        pathType: Prefix
+        backend:
+          service:
+            name: user-management-service
+            port:
+              number: 3005
+      
+      # Whitelist Routes
+      - path: /api/v1/whitelist
+        pathType: Prefix
+        backend:
+          service:
+            name: smart-whitelist-service
+            port:
+              number: 3006
+      
+      # Configuration Routes
+      - path: /api/v1/config
+        pathType: Prefix
+        backend:
+          service:
+            name: configuration-service
+            port:
+              number: 3007
+      
+      # Storage Routes
+      - path: /api/v1/storage
+        pathType: Prefix
+        backend:
+          service:
+            name: storage-service
+            port:
+              number: 3008
+      
+      # Monitoring Routes
+      - path: /api/v1/monitoring
+        pathType: Prefix
+        backend:
+          service:
+            name: monitoring-service
+            port:
+              number: 3009
+
+---
+# Monitoring Dashboard Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-ninja-dashboard-ingress
+  namespace: ai-ninja
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: basic-auth-secret
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - dashboard.ai-ninja.com
+    secretName: ai-ninja-dashboard-tls-secret
+  rules:
+  - host: dashboard.ai-ninja.com
+    http:
+      paths:
+      # Grafana Dashboard
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: monitoring-service
+            port:
+              number: 3000
+      
+      # Prometheus Metrics
+      - path: /prometheus
+        pathType: Prefix
+        backend:
+          service:
+            name: monitoring-service
+            port:
+              number: 9090
+
+---
+# Basic Auth Secret for Dashboard Access
+apiVersion: v1
+kind: Secret
+metadata:
+  name: basic-auth-secret
+  namespace: ai-ninja
+type: Opaque
+data:
+  auth: YWRtaW46JGFwcjEkSDZ1a2RITEkkd2I2dElJY283LkJkRGVadGxKbm5uLjE=  # admin:password
+
+---
+# TLS Certificate Issuer (Let's Encrypt)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@ai-ninja.com
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    - http01:
+        ingress:
+          class: nginx

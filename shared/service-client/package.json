@@ -1,0 +1,25 @@
+{
+  "name": "@ai-ninja/service-client",
+  "version": "1.0.0",
+  "description": "Unified service communication client for AI Answer Ninja",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "test:integration": "jest --config jest.integration.config.js"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.8",
+    "axios": "^1.11.0",
+    "jest": "^29.7.0",
+    "opossum": "^9.0.0"
+  },
+  "keywords": [
+    "microservices",
+    "api-client",
+    "circuit-breaker",
+    "service-discovery"
+  ],
+  "author": "AI Answer Ninja Team",
+  "license": "MIT",
+  "type": "commonjs"
+}

@@ -1,0 +1,466 @@
+# AI Answer Ninja - Helm Chart Values
+# Production-ready configuration with high availability
+
+global:
+  # Image registry settings
+  imageRegistry: "your-registry.azurecr.io"
+  imagePullSecrets:
+    - name: registry-credentials
+  
+  # Environment settings
+  environment: production
+  namespace: ai-ninja
+  
+  # Common labels
+  labels:
+    app.kubernetes.io/name: ai-answer-ninja
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: helm
+
+# Service discovery and load balancing
+serviceDiscovery:
+  enabled: true
+  type: kubernetes  # kubernetes, consul
+  consul:
+    enabled: false
+    url: "http://consul:8500"
+
+loadBalancer:
+  type: nginx  # nginx, istio, traefik
+  nginx:
+    enabled: true
+    replicas: 2
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "1"
+
+# Core Services Configuration
+coreServices:
+  # Phone Gateway Service
+  phoneGateway:
+    enabled: true
+    image:
+      repository: ai-ninja/phone-gateway
+      tag: "latest"
+      pullPolicy: Always
+    
+    replicas: 2
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 80
+    
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "1"
+    
+    service:
+      type: ClusterIP
+      port: 3001
+    
+    config:
+      nodeEnv: production
+      logLevel: info
+
+  # Real-time Processor Service (Critical)
+  realtimeProcessor:
+    enabled: true
+    image:
+      repository: ai-ninja/realtime-processor
+      tag: "latest"
+      pullPolicy: Always
+    
+    replicas: 3
+    autoscaling:
+      enabled: true
+      minReplicas: 3
+      maxReplicas: 10
+      targetCPUUtilizationPercentage: 60
+      targetMemoryUtilizationPercentage: 70
+      scaleUpBehavior:
+        stabilizationWindowSeconds: 60
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 60
+    
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "750m"
+      limits:
+        memory: "3Gi"
+        cpu: "2"
+    
+    service:
+      type: ClusterIP
+      port: 3002
+    
+    config:
+      nodeEnv: production
+      logLevel: info
+    
+    priorityClass: high-priority
+
+  # Conversation Engine Service
+  conversationEngine:
+    enabled: true
+    image:
+      repository: ai-ninja/conversation-engine
+      tag: "latest"
+      pullPolicy: Always
+    
+    replicas: 2
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 8
+      targetCPUUtilizationPercentage: 65
+      targetMemoryUtilizationPercentage: 75
+    
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "500m"
+      limits:
+        memory: "2Gi"
+        cpu: "1.5"
+    
+    service:
+      type: ClusterIP
+      port: 3003
+
+  # Profile Analytics Service
+  profileAnalytics:
+    enabled: true
+    image:
+      repository: ai-ninja/profile-analytics
+      tag: "latest"
+      pullPolicy: Always
+    
+    replicas: 2
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 80
+    
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "500m"
+      limits:
+        memory: "2Gi"
+        cpu: "1"
+    
+    service:
+      type: ClusterIP
+      port: 3004
+
+# Support Services Configuration
+supportServices:
+  # User Management Service
+  userManagement:
+    enabled: true
+    image:
+      repository: ai-ninja/user-management
+      tag: "latest"
+      pullPolicy: Always
+    
+    replicas: 1
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "1"
+    
+    service:
+      type: ClusterIP
+      port: 3005
+      sessionAffinity: ClientIP
+      sessionAffinityConfig:
+        timeoutSeconds: 10800  # 3 hours
+
+  # Smart Whitelist Service
+  smartWhitelist:
+    enabled: true
+    image:
+      repository: ai-ninja/smart-whitelist
+      tag: "latest"
+      pullPolicy: Always
+    
+    replicas: 1
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "1"
+    
+    service:
+      type: ClusterIP
+      port: 3006
+
+# Platform Services Configuration
+platformServices:
+  # Configuration Service
+  configuration:
+    enabled: true
+    image:
+      repository: ai-ninja/configuration
+      tag: "latest"
+      pullPolicy: Always
+    
+    replicas: 1
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "125m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+    
+    service:
+      type: ClusterIP
+      port: 3007
+
+  # Storage Service
+  storage:
+    enabled: true
+    image:
+      repository: ai-ninja/storage
+      tag: "latest"
+      pullPolicy: Always
+    
+    replicas: 1
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "1"
+    
+    service:
+      type: ClusterIP
+      port: 3008
+
+  # Monitoring Service
+  monitoring:
+    enabled: true
+    image:
+      repository: ai-ninja/monitoring
+      tag: "latest"
+      pullPolicy: Always
+    
+    replicas: 1
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "500m"
+      limits:
+        memory: "2Gi"
+        cpu: "1"
+    
+    service:
+      type: ClusterIP
+      ports:
+        http: 3009
+        prometheus: 9090
+        grafana: 3000
+
+# PostgreSQL Configuration (Bitnami Chart)
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: ""  # Will be set in secrets
+    database: ai_ninja
+  architecture: standalone  # or replication for HA
+  primary:
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: "premium-ssd"
+  readReplicas:
+    replicaCount: 0  # Set to 1+ for read replicas
+  metrics:
+    enabled: true
+
+# Redis Configuration (Bitnami Chart)
+redis:
+  enabled: true
+  architecture: replication  # master-slave setup
+  auth:
+    enabled: true
+    password: ""  # Will be set in secrets
+  master:
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1"
+    persistence:
+      enabled: true
+      size: 8Gi
+  replica:
+    replicaCount: 2
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "125m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+  sentinel:
+    enabled: true
+  metrics:
+    enabled: true
+
+# Ingress Configuration
+ingress:
+  enabled: true
+  className: nginx
+  
+  # Main API Ingress
+  api:
+    enabled: true
+    host: api.ai-ninja.com
+    tls:
+      enabled: true
+      secretName: ai-ninja-tls-secret
+    annotations:
+      nginx.ingress.kubernetes.io/rate-limit: "100"
+      nginx.ingress.kubernetes.io/rate-limit-rps: "5"
+      nginx.ingress.kubernetes.io/limit-connections: "20"
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  
+  # Dashboard Ingress
+  dashboard:
+    enabled: true
+    host: dashboard.ai-ninja.com
+    tls:
+      enabled: true
+      secretName: ai-ninja-dashboard-tls-secret
+    annotations:
+      nginx.ingress.kubernetes.io/auth-type: basic
+      nginx.ingress.kubernetes.io/auth-secret: basic-auth-secret
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+
+# Security Configuration
+security:
+  # Pod Security Standards
+  podSecurityPolicy:
+    enabled: true
+  
+  # Network Policies
+  networkPolicy:
+    enabled: true
+    ingress:
+      enabled: true
+    egress:
+      enabled: true
+  
+  # Service Mesh (if using Istio)
+  serviceMesh:
+    enabled: false
+    type: istio
+
+# Monitoring and Observability
+monitoring:
+  # Prometheus monitoring
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+  
+  # Grafana dashboards
+  grafana:
+    enabled: true
+    dashboards:
+      enabled: true
+  
+  # Jaeger tracing
+  tracing:
+    enabled: false
+    jaeger:
+      enabled: false
+
+# Resource Management
+resources:
+  # Priority Classes
+  priorityClasses:
+    high:
+      value: 1000
+      description: "High priority for critical services"
+    medium:
+      value: 500
+      description: "Medium priority for core services"
+    low:
+      value: 100
+      description: "Low priority for support services"
+
+# Persistent Volumes
+persistence:
+  storageClass: "premium-ssd"  # Azure Premium SSD
+  accessMode: ReadWriteOnce
+  
+  # Data volumes
+  postgres:
+    size: 20Gi
+  redis:
+    size: 8Gi
+  storage:
+    size: 50Gi
+  monitoring:
+    size: 10Gi
+
+# Configuration and Secrets
+config:
+  # External secret management
+  externalSecrets:
+    enabled: false  # Set true for Azure Key Vault integration
+    provider: azure-keyvault
+  
+  # ConfigMaps
+  configMaps:
+    app:
+      nodeEnv: production
+      logLevel: info
+      logFormat: json
+
+# Backup and Recovery
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention: "7d"
+  
+  postgres:
+    enabled: true
+    storage: 50Gi
+  
+  redis:
+    enabled: true
+    storage: 10Gi

@@ -1,0 +1,79 @@
+# Real-time Processor Service - Critical Component
+{{- if .Values.coreServices.realtimeProcessor.enabled }}
+{{- $service := .Values.coreServices.realtimeProcessor }}
+{{- $context := dict "name" "realtime-processor" "component" "realtime-service" "tier" "core" "service" $service "Release" .Release "Chart" .Chart "Values" .Values }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime-processor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-ninja.serviceLabels" $context | nindent 4 }}
+    critical: "true"
+spec:
+  replicas: {{ $service.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 2
+  selector:
+    matchLabels:
+      app: realtime-processor
+  template:
+    metadata:
+      labels:
+        app: realtime-processor
+        tier: core
+        component: realtime-service
+        critical: "true"
+        {{- include "ai-ninja.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $service.priorityClass }}
+      priorityClassName: {{ $service.priorityClass }}
+      {{- end }}
+      containers:
+      - name: realtime-processor
+        image: "{{ include "ai-ninja.imageRepository" $service.image }}:{{ $service.image.tag }}"
+        imagePullPolicy: {{ $service.image.pullPolicy }}
+        env:
+        {{- include "ai-ninja.commonEnvVars" . | nindent 8 }}
+        {{- include "ai-ninja.azureEnvVars" . | nindent 8 }}
+        - name: CONVERSATION_ENGINE_URL
+          value: "http://conversation-engine-service:3003"
+        - name: SERVICE_NAME
+          value: "realtime-processor"
+        - name: INSTANCE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        ports:
+        - containerPort: {{ $service.service.port }}
+          name: http
+        {{- include "ai-ninja.livenessProbe" (dict "port" $service.service.port) | nindent 8 }}
+        {{- include "ai-ninja.readinessProbe" (dict "port" $service.service.port) | nindent 8 }}
+        {{- include "ai-ninja.resources" $service | nindent 8 }}
+        volumeMounts:
+        - name: temp-audio
+          mountPath: /app/temp/audio
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: temp-audio
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: logs
+        emptyDir: {}
+
+---
+{{- include "ai-ninja.service" $context }}
+
+{{- include "ai-ninja.hpa" $context }}
+
+{{- end }}

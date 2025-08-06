@@ -1,0 +1,410 @@
+# AI Answer Ninja - Core Services Deployments
+# High-performance services with horizontal scaling
+
+---
+# Phone Gateway Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phone-gateway
+  namespace: ai-ninja
+  labels:
+    app: phone-gateway
+    tier: core
+    component: phone-service
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: phone-gateway
+  template:
+    metadata:
+      labels:
+        app: phone-gateway
+        tier: core
+        component: phone-service
+    spec:
+      imagePullSecrets:
+      - name: registry-credentials
+      containers:
+      - name: phone-gateway
+        image: your-registry.azurecr.io/ai-ninja/phone-gateway:latest
+        env:
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: NODE_ENV
+        - name: POSTGRES_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres-service:5432/$(POSTGRES_DB)"
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: POSTGRES_DB
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis-master-service:6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: REDIS_PASSWORD
+        - name: AZURE_COMMUNICATION_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: AZURE_COMMUNICATION_CONNECTION_STRING
+        - name: USER_MANAGEMENT_URL
+          value: "http://user-management-service:3005"
+        - name: WHITELIST_SERVICE_URL
+          value: "http://smart-whitelist-service:3006"
+        ports:
+        - containerPort: 3001
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1"
+
+---
+# Real-time Processor Service (Critical - High Resources)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime-processor
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+    component: realtime-service
+    critical: "true"
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 2
+  selector:
+    matchLabels:
+      app: realtime-processor
+  template:
+    metadata:
+      labels:
+        app: realtime-processor
+        tier: core
+        component: realtime-service
+        critical: "true"
+    spec:
+      imagePullSecrets:
+      - name: registry-credentials
+      containers:
+      - name: realtime-processor
+        image: your-registry.azurecr.io/ai-ninja/realtime-processor:latest
+        env:
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: NODE_ENV
+        - name: POSTGRES_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres-service:5432/$(POSTGRES_DB)"
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: POSTGRES_DB
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis-master-service:6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: REDIS_PASSWORD
+        - name: AZURE_SPEECH_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: AZURE_SPEECH_KEY
+        - name: AZURE_SPEECH_REGION
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: AZURE_SPEECH_REGION
+        - name: AZURE_OPENAI_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: AZURE_OPENAI_KEY
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: AZURE_OPENAI_ENDPOINT
+        - name: CONVERSATION_ENGINE_URL
+          value: "http://conversation-engine-service:3003"
+        ports:
+        - containerPort: 3002
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "750m"
+          limits:
+            memory: "3Gi"
+            cpu: "2"
+        volumeMounts:
+        - name: temp-audio
+          mountPath: /app/temp/audio
+      volumes:
+      - name: temp-audio
+        emptyDir:
+          sizeLimit: 1Gi
+
+---
+# Conversation Engine Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: conversation-engine
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+    component: ai-service
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: conversation-engine
+  template:
+    metadata:
+      labels:
+        app: conversation-engine
+        tier: core
+        component: ai-service
+    spec:
+      imagePullSecrets:
+      - name: registry-credentials
+      containers:
+      - name: conversation-engine
+        image: your-registry.azurecr.io/ai-ninja/conversation-engine:latest
+        env:
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: NODE_ENV
+        - name: POSTGRES_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres-service:5432/$(POSTGRES_DB)"
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: POSTGRES_DB
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis-master-service:6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: REDIS_PASSWORD
+        - name: AZURE_OPENAI_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: AZURE_OPENAI_KEY
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: AZURE_OPENAI_ENDPOINT
+        - name: PROFILE_ANALYTICS_URL
+          value: "http://profile-analytics-service:3004"
+        ports:
+        - containerPort: 3003
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3003
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3003
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1.5"
+
+---
+# Profile Analytics Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profile-analytics
+  namespace: ai-ninja
+  labels:
+    app: profile-analytics
+    tier: core
+    component: analytics-service
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: profile-analytics
+  template:
+    metadata:
+      labels:
+        app: profile-analytics
+        tier: core
+        component: analytics-service
+    spec:
+      imagePullSecrets:
+      - name: registry-credentials
+      containers:
+      - name: profile-analytics
+        image: your-registry.azurecr.io/ai-ninja/profile-analytics:latest
+        env:
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: NODE_ENV
+        - name: POSTGRES_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres-service:5432/$(POSTGRES_DB)"
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: POSTGRES_DB
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis-master-service:6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: REDIS_PASSWORD
+        - name: AZURE_TEXT_ANALYTICS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: AZURE_TEXT_ANALYTICS_KEY
+        - name: AZURE_TEXT_ANALYTICS_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: AZURE_TEXT_ANALYTICS_ENDPOINT
+        ports:
+        - containerPort: 3004
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3004
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3004
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"

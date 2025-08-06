@@ -1,0 +1,179 @@
+# AI Answer Ninja - Ingress Configuration
+{{- if .Values.ingress.enabled }}
+
+{{- if .Values.ingress.api.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ai-ninja.fullname" . }}-api-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-ninja.labels" . | nindent 4 }}
+    component: api-gateway
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.ingress.className }}
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    {{- with .Values.ingress.api.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.api.tls.enabled }}
+  tls:
+  - hosts:
+    - {{ .Values.ingress.api.host }}
+    secretName: {{ .Values.ingress.api.tls.secretName }}
+  {{- end }}
+  rules:
+  - host: {{ .Values.ingress.api.host }}
+    http:
+      paths:
+      # Core Services
+      {{- if .Values.coreServices.phoneGateway.enabled }}
+      - path: /api/v1/phone
+        pathType: Prefix
+        backend:
+          service:
+            name: phone-gateway-service
+            port:
+              number: {{ .Values.coreServices.phoneGateway.service.port }}
+      {{- end }}
+      
+      {{- if .Values.coreServices.realtimeProcessor.enabled }}
+      - path: /api/v1/realtime
+        pathType: Prefix
+        backend:
+          service:
+            name: realtime-processor-service
+            port:
+              number: {{ .Values.coreServices.realtimeProcessor.service.port }}
+      {{- end }}
+      
+      {{- if .Values.coreServices.conversationEngine.enabled }}
+      - path: /api/v1/conversation
+        pathType: Prefix
+        backend:
+          service:
+            name: conversation-engine-service
+            port:
+              number: {{ .Values.coreServices.conversationEngine.service.port }}
+      {{- end }}
+      
+      {{- if .Values.coreServices.profileAnalytics.enabled }}
+      - path: /api/v1/analytics
+        pathType: Prefix
+        backend:
+          service:
+            name: profile-analytics-service
+            port:
+              number: {{ .Values.coreServices.profileAnalytics.service.port }}
+      {{- end }}
+      
+      # Support Services
+      {{- if .Values.supportServices.userManagement.enabled }}
+      - path: /api/v1/(users|auth)
+        pathType: Prefix
+        backend:
+          service:
+            name: user-management-service
+            port:
+              number: {{ .Values.supportServices.userManagement.service.port }}
+      {{- end }}
+      
+      {{- if .Values.supportServices.smartWhitelist.enabled }}
+      - path: /api/v1/whitelist
+        pathType: Prefix
+        backend:
+          service:
+            name: smart-whitelist-service
+            port:
+              number: {{ .Values.supportServices.smartWhitelist.service.port }}
+      {{- end }}
+      
+      # Platform Services
+      {{- if .Values.platformServices.configuration.enabled }}
+      - path: /api/v1/config
+        pathType: Prefix
+        backend:
+          service:
+            name: configuration-service
+            port:
+              number: {{ .Values.platformServices.configuration.service.port }}
+      {{- end }}
+      
+      {{- if .Values.platformServices.storage.enabled }}
+      - path: /api/v1/storage
+        pathType: Prefix
+        backend:
+          service:
+            name: storage-service
+            port:
+              number: {{ .Values.platformServices.storage.service.port }}
+      {{- end }}
+      
+      {{- if .Values.platformServices.monitoring.enabled }}
+      - path: /api/v1/monitoring
+        pathType: Prefix
+        backend:
+          service:
+            name: monitoring-service
+            port:
+              number: {{ .Values.platformServices.monitoring.service.ports.http }}
+      
+      - path: /metrics
+        pathType: Prefix
+        backend:
+          service:
+            name: monitoring-service
+            port:
+              number: {{ .Values.platformServices.monitoring.service.ports.prometheus }}
+      {{- end }}
+{{- end }}
+
+{{- if .Values.ingress.dashboard.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ai-ninja.fullname" . }}-dashboard-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-ninja.labels" . | nindent 4 }}
+    component: dashboard
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.ingress.className }}
+    {{- with .Values.ingress.dashboard.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.dashboard.tls.enabled }}
+  tls:
+  - hosts:
+    - {{ .Values.ingress.dashboard.host }}
+    secretName: {{ .Values.ingress.dashboard.tls.secretName }}
+  {{- end }}
+  rules:
+  - host: {{ .Values.ingress.dashboard.host }}
+    http:
+      paths:
+      # Grafana Dashboard
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: monitoring-service
+            port:
+              number: {{ .Values.platformServices.monitoring.service.ports.grafana }}
+      
+      # Prometheus Interface
+      - path: /prometheus
+        pathType: Prefix
+        backend:
+          service:
+            name: monitoring-service
+            port:
+              number: {{ .Values.platformServices.monitoring.service.ports.prometheus }}
+{{- end }}
+
+{{- end }}

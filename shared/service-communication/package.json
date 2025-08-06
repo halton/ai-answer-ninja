@@ -1,0 +1,41 @@
+{
+  "name": "@ai-ninja/service-communication",
+  "version": "1.0.0",
+  "description": "Service-to-service communication library for AI Answer Ninja",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix"
+  },
+  "dependencies": {
+    "axios": "^1.6.2",
+    "exponential-backoff": "^3.1.1",
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0",
+    "circuit-breaker-js": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/uuid": "^9.0.7",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.54.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.3.2"
+  },
+  "keywords": [
+    "microservices",
+    "service-communication",
+    "api-client",
+    "circuit-breaker",
+    "service-discovery"
+  ],
+  "author": "AI Answer Ninja Team",
+  "license": "MIT"
+}

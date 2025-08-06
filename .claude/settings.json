@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "task_complete": "./.claude/hooks/task_complete.sh"
+  },
+  "auto_commit": {
+    "enabled": true,
+    "include_patterns": [
+      "*.md",
+      "*.js", 
+      "*.ts",
+      "*.json",
+      "*.yaml",
+      "*.yml",
+      "*.go",
+      "*.py",
+      "*.sql"
+    ],
+    "exclude_patterns": [
+      "node_modules/**",
+      ".git/**",
+      "*.log",
+      "tmp/**"
+    ]
+  },
+  "git": {
+    "auto_stage": true,
+    "commit_prefix": "🤖",
+    "include_timestamp": true
+  }
+}

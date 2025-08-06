@@ -1,0 +1,480 @@
+# Kubernetes Service Discovery Configuration
+# Creates Services and ServiceMonitors for all microservices
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-ninja
+  labels:
+    name: ai-ninja
+    monitoring: enabled
+
+---
+# User Management Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-management
+  namespace: ai-ninja
+  labels:
+    app: user-management
+    tier: support
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3005"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: user-management
+  ports:
+    - name: http
+      port: 3005
+      targetPort: 3005
+      protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-management
+  namespace: ai-ninja
+  labels:
+    app: user-management
+    tier: support
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: user-management
+  template:
+    metadata:
+      labels:
+        app: user-management
+        tier: support
+    spec:
+      containers:
+      - name: user-management
+        image: ai-ninja/user-management:latest
+        ports:
+        - containerPort: 3005
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: POSTGRES_URL
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: postgres-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: cache-secret
+              key: redis-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: auth-secret
+              key: jwt-secret
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3005
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 3005
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Smart Whitelist Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: smart-whitelist
+  namespace: ai-ninja
+  labels:
+    app: smart-whitelist
+    tier: support
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3006"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: smart-whitelist
+  ports:
+    - name: http
+      port: 3006
+      targetPort: 3006
+      protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smart-whitelist
+  namespace: ai-ninja
+  labels:
+    app: smart-whitelist
+    tier: support
+spec:
+  replicas: 3  # Higher replica count for critical spam filtering
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: smart-whitelist
+  template:
+    metadata:
+      labels:
+        app: smart-whitelist
+        tier: support
+    spec:
+      containers:
+      - name: smart-whitelist
+        image: ai-ninja/smart-whitelist:latest
+        ports:
+        - containerPort: 3006
+        env:
+        - name: POSTGRES_URL
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: postgres-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: cache-secret
+              key: redis-url
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3006
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 3006
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+---
+# Realtime Processor Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: realtime-processor
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3002"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: realtime-processor
+  ports:
+    - name: http
+      port: 3002
+      targetPort: 3002
+      protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime-processor
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+spec:
+  replicas: 4  # High replica count for real-time processing
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: realtime-processor
+  template:
+    metadata:
+      labels:
+        app: realtime-processor
+        tier: core
+    spec:
+      containers:
+      - name: realtime-processor
+        image: ai-ninja/realtime-processor:latest
+        ports:
+        - containerPort: 3002
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: AZURE_SPEECH_KEY
+          valueFrom:
+            secretKeyRef:
+              name: azure-secret
+              key: speech-key
+        - name: AZURE_SPEECH_REGION
+          valueFrom:
+            secretKeyRef:
+              name: azure-secret
+              key: speech-region
+        - name: AZURE_OPENAI_KEY
+          valueFrom:
+            secretKeyRef:
+              name: azure-secret
+              key: openai-key
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: cache-secret
+              key: redis-url
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 3002
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+---
+# Conversation Engine Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: conversation-engine
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3003"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: conversation-engine
+  ports:
+    - name: http
+      port: 3003
+      targetPort: 3003
+      protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: conversation-engine
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: conversation-engine
+  template:
+    metadata:
+      labels:
+        app: conversation-engine
+        tier: core
+    spec:
+      containers:
+      - name: conversation-engine
+        image: ai-ninja/conversation-engine:latest
+        ports:
+        - containerPort: 3003
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: AZURE_OPENAI_KEY
+          valueFrom:
+            secretKeyRef:
+              name: azure-secret
+              key: openai-key
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: cache-secret
+              key: redis-url
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3003
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 3003
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+---
+# API Gateway (Nginx Ingress)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-ninja-gateway
+  namespace: ai-ninja
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - ai-ninja.com
+    secretName: ai-ninja-tls
+  rules:
+  - host: ai-ninja.com
+    http:
+      paths:
+      - path: /api/auth(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: user-management
+            port:
+              number: 3005
+      - path: /api/users(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: user-management
+            port:
+              number: 3005
+      - path: /api/whitelist(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: smart-whitelist
+            port:
+              number: 3006
+      - path: /api/realtime(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: realtime-processor
+            port:
+              number: 3002
+      - path: /api/conversation(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: conversation-engine
+            port:
+              number: 3003
+
+---
+# Horizontal Pod Autoscaler for critical services
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: realtime-processor-hpa
+  namespace: ai-ninja
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: realtime-processor
+  minReplicas: 4
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: smart-whitelist-hpa
+  namespace: ai-ninja
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: smart-whitelist
+  minReplicas: 3
+  maxReplicas: 15
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75

@@ -1,5 +1,8 @@
 {
   "dependencies": {
+    "axios": "^1.11.0",
+    "jest": "^30.0.5",
+    "opossum": "^9.0.0",
     "p-queue": "^8.0.1"
   }
 }

@@ -1,0 +1,38 @@
+apiVersion: v2
+name: ai-ninja
+description: AI Answer Ninja - Intelligent Phone Answering System
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+home: https://ai-ninja.com
+sources:
+  - https://github.com/your-org/ai-answer-ninja
+
+maintainers:
+  - name: AI Ninja Team
+    email: team@ai-ninja.com
+
+keywords:
+  - ai
+  - phone
+  - automation
+  - voice
+  - azure
+
+dependencies:
+  - name: postgresql
+    version: "12.8.2"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: redis
+    version: "17.11.7"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+  - name: nginx-ingress
+    version: "4.7.1"
+    repository: https://kubernetes.github.io/ingress-nginx
+    condition: ingress.nginx.enabled
+
+annotations:
+  category: Communication
+  licenses: MIT

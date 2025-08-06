@@ -1,0 +1,192 @@
+# AI Answer Ninja - Service Discovery and Load Balancing Alerts
+
+groups:
+  - name: service-discovery
+    rules:
+      # Service availability alerts
+      - alert: ServiceDown
+        expr: up{job=~"phone-gateway|realtime-processor|conversation-engine|profile-analytics"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} has been down for more than 1 minute"
+          runbook_url: "https://wiki.ai-ninja.com/alerts/service-down"
+
+      - alert: CriticalServiceDown
+        expr: up{job="realtime-processor"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: platform
+          pager: "true"
+        annotations:
+          summary: "CRITICAL: Real-time processor service is down"
+          description: "Real-time processor service has been down for more than 30 seconds"
+          runbook_url: "https://wiki.ai-ninja.com/alerts/critical-service-down"
+
+      # Load balancer health
+      - alert: LoadBalancerDown
+        expr: up{job="nginx-ingress"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Load balancer is down"
+          description: "Nginx load balancer has been down for more than 1 minute"
+
+      - alert: HighRequestLatency
+        expr: histogram_quantile(0.95, rate(nginx_ingress_controller_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High request latency detected"
+          description: "95th percentile latency is {{ $value }}s for {{ $labels.ingress }}"
+
+      # Service discovery health
+      - alert: ConsulDown
+        expr: up{job="consul"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Consul service discovery is down"
+          description: "Consul has been down for more than 2 minutes"
+
+      - alert: ServiceRegistrationFailed
+        expr: increase(consul_catalog_service_node_healthy[5m]) < 0
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Service registration failures detected"
+          description: "Services are failing to register with Consul"
+
+  - name: load-balancing
+    rules:
+      # Load balancing metrics
+      - alert: UnbalancedTraffic
+        expr: |
+          (
+            max by (upstream) (rate(nginx_ingress_controller_requests[5m])) - 
+            min by (upstream) (rate(nginx_ingress_controller_requests[5m]))
+          ) / max by (upstream) (rate(nginx_ingress_controller_requests[5m])) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Unbalanced traffic distribution detected"
+          description: "Traffic distribution variance is > 50% for upstream {{ $labels.upstream }}"
+
+      - alert: HighConnectionCount
+        expr: nginx_ingress_controller_nginx_process_connections > 8000
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High connection count on load balancer"
+          description: "Connection count is {{ $value }} on {{ $labels.instance }}"
+
+      - alert: UpstreamDown
+        expr: nginx_ingress_controller_upstream_server_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Upstream server is down"
+          description: "Upstream {{ $labels.upstream }} server {{ $labels.server }} is down"
+
+  - name: auto-scaling
+    rules:
+      # HPA metrics
+      - alert: HPAMaxReplicas
+        expr: kube_horizontalpodautoscaler_status_current_replicas >= kube_horizontalpodautoscaler_spec_max_replicas
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "HPA reached maximum replicas"
+          description: "HPA {{ $labels.horizontalpodautoscaler }} has reached max replicas ({{ $value }})"
+
+      - alert: HPAScalingIssue
+        expr: |
+          (
+            kube_horizontalpodautoscaler_status_desired_replicas - 
+            kube_horizontalpodautoscaler_status_current_replicas
+          ) != 0
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "HPA scaling issue detected"
+          description: "HPA {{ $labels.horizontalpodautoscaler }} has scaling issues. Desired: {{ $labels.desired }}, Current: {{ $labels.current }}"
+
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{container!="POD",container!=""}[5m]) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value }}% for {{ $labels.pod }} in {{ $labels.namespace }}"
+
+      - alert: HighMemoryUsage
+        expr: (container_memory_working_set_bytes{container!="POD",container!=""} / container_spec_memory_limit_bytes{container!="POD",container!=""}) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value }}% for {{ $labels.pod }} in {{ $labels.namespace }}"
+
+  - name: real-time-processor-critical
+    rules:
+      # Critical alerts for real-time processor
+      - alert: RealtimeProcessorHighLatency
+        expr: histogram_quantile(0.95, rate(ai_ninja_realtime_processing_duration_seconds_bucket[5m])) > 1.5
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          service: realtime-processor
+          pager: "true"
+        annotations:
+          summary: "Real-time processor high latency"
+          description: "95th percentile processing latency is {{ $value }}s (threshold: 1.5s)"
+          runbook_url: "https://wiki.ai-ninja.com/alerts/realtime-latency"
+
+      - alert: RealtimeProcessorQueueBackup
+        expr: ai_ninja_realtime_queue_depth > 100
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+          service: realtime-processor
+        annotations:
+          summary: "Real-time processor queue backup"
+          description: "Processing queue depth is {{ $value }} (threshold: 100)"
+
+      - alert: RealtimeProcessorErrorRate
+        expr: rate(ai_ninja_realtime_errors_total[5m]) / rate(ai_ninja_realtime_requests_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          service: realtime-processor
+        annotations:
+          summary: "High error rate in real-time processor"
+          description: "Error rate is {{ $value | humanizePercentage }} over 5 minutes"

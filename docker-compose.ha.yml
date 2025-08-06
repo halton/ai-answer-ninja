@@ -1,0 +1,659 @@
+# AI Answer Ninja - High Availability Docker Compose Configuration
+# Multi-instance deployment with service discovery and load balancing
+
+version: '3.8'
+
+x-common-variables: &common-variables
+  NODE_ENV: ${NODE_ENV:-production}
+  REDIS_URL: redis://redis:6379
+  POSTGRES_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/ai_ninja
+
+x-common-logging: &common-logging
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-common-healthcheck: &common-healthcheck
+  interval: 15s
+  timeout: 5s
+  retries: 3
+  start_period: 30s
+
+services:
+  # ===========================================
+  # Service Discovery and Load Balancing
+  # ===========================================
+  
+  consul:
+    image: consul:1.15-alpine
+    container_name: ai-ninja-consul
+    ports:
+      - "8500:8500"
+      - "8600:8600"
+    environment:
+      - CONSUL_BIND_INTERFACE=eth0
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    command: >
+      consul agent 
+      -server 
+      -bootstrap-expect=1 
+      -ui 
+      -client=0.0.0.0 
+      -data-dir=/consul/data
+      -config-dir=/consul/config
+    volumes:
+      - consul_data:/consul/data
+      - ./config/consul:/consul/config
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      <<: *common-healthcheck
+    <<: *common-logging
+
+  # Enhanced nginx with service discovery
+  nginx:
+    build:
+      context: ./config/nginx
+      dockerfile: Dockerfile.ha
+    container_name: ai-ninja-nginx-lb
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Direct service access
+    depends_on:
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./config/nginx/templates:/etc/nginx/templates:ro
+      - ./logs/nginx:/var/log/nginx
+      - ./ssl:/etc/nginx/ssl:ro
+    environment:
+      - CONSUL_URL=http://consul:8500
+    <<: *common-logging
+
+  # ===========================================
+  # Core Services with Multiple Instances
+  # ===========================================
+
+  # Phone Gateway Service - 2 instances
+  phone-gateway-1:
+    build:
+      context: ./services/phone-gateway
+      dockerfile: Dockerfile
+    hostname: phone-gateway-1
+    environment:
+      <<: *common-variables
+      AZURE_COMMUNICATION_CONNECTION_STRING: ${AZURE_COMMUNICATION_CONNECTION_STRING}
+      USER_MANAGEMENT_URL: http://user-management:3005
+      WHITELIST_SERVICE_URL: http://smart-whitelist:3006
+      INSTANCE_ID: phone-gateway-1
+      SERVICE_NAME: phone-gateway
+      SERVICE_PORT: 3001
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/phone-gateway-1:/app/logs
+    <<: *common-logging
+
+  phone-gateway-2:
+    build:
+      context: ./services/phone-gateway
+      dockerfile: Dockerfile
+    hostname: phone-gateway-2
+    environment:
+      <<: *common-variables
+      AZURE_COMMUNICATION_CONNECTION_STRING: ${AZURE_COMMUNICATION_CONNECTION_STRING}
+      USER_MANAGEMENT_URL: http://user-management:3005
+      WHITELIST_SERVICE_URL: http://smart-whitelist:3006
+      INSTANCE_ID: phone-gateway-2
+      SERVICE_NAME: phone-gateway
+      SERVICE_PORT: 3001
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/phone-gateway-2:/app/logs
+    <<: *common-logging
+
+  # Real-time Processor Service - 3 instances (critical service)
+  realtime-processor-1:
+    build:
+      context: ./services/realtime-processor
+      dockerfile: Dockerfile
+    hostname: realtime-processor-1
+    environment:
+      <<: *common-variables
+      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY}
+      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION}
+      AZURE_OPENAI_KEY: ${AZURE_OPENAI_KEY}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      CONVERSATION_ENGINE_URL: http://conversation-engine:3003
+      INSTANCE_ID: realtime-processor-1
+      SERVICE_NAME: realtime-processor
+      SERVICE_PORT: 3002
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/realtime-processor-1:/app/logs
+      - ./temp/audio-1:/app/temp/audio
+    <<: *common-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 2G
+
+  realtime-processor-2:
+    build:
+      context: ./services/realtime-processor
+      dockerfile: Dockerfile
+    hostname: realtime-processor-2
+    environment:
+      <<: *common-variables
+      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY}
+      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION}
+      AZURE_OPENAI_KEY: ${AZURE_OPENAI_KEY}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      CONVERSATION_ENGINE_URL: http://conversation-engine:3003
+      INSTANCE_ID: realtime-processor-2
+      SERVICE_NAME: realtime-processor
+      SERVICE_PORT: 3002
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/realtime-processor-2:/app/logs
+      - ./temp/audio-2:/app/temp/audio
+    <<: *common-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 2G
+
+  realtime-processor-3:
+    build:
+      context: ./services/realtime-processor
+      dockerfile: Dockerfile
+    hostname: realtime-processor-3
+    environment:
+      <<: *common-variables
+      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY}
+      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION}
+      AZURE_OPENAI_KEY: ${AZURE_OPENAI_KEY}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      CONVERSATION_ENGINE_URL: http://conversation-engine:3003
+      INSTANCE_ID: realtime-processor-3
+      SERVICE_NAME: realtime-processor
+      SERVICE_PORT: 3002
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/realtime-processor-3:/app/logs
+      - ./temp/audio-3:/app/temp/audio
+    <<: *common-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 2G
+
+  # Conversation Engine Service - 2 instances
+  conversation-engine-1:
+    build:
+      context: ./services/conversation-engine
+      dockerfile: Dockerfile
+    hostname: conversation-engine-1
+    environment:
+      <<: *common-variables
+      AZURE_OPENAI_KEY: ${AZURE_OPENAI_KEY}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      PROFILE_ANALYTICS_URL: http://profile-analytics:3004
+      INSTANCE_ID: conversation-engine-1
+      SERVICE_NAME: conversation-engine
+      SERVICE_PORT: 3003
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/conversation-engine-1:/app/logs
+    <<: *common-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1.5G
+
+  conversation-engine-2:
+    build:
+      context: ./services/conversation-engine
+      dockerfile: Dockerfile
+    hostname: conversation-engine-2
+    environment:
+      <<: *common-variables
+      AZURE_OPENAI_KEY: ${AZURE_OPENAI_KEY}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      PROFILE_ANALYTICS_URL: http://profile-analytics:3004
+      INSTANCE_ID: conversation-engine-2
+      SERVICE_NAME: conversation-engine
+      SERVICE_PORT: 3003
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/conversation-engine-2:/app/logs
+    <<: *common-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1.5G
+
+  # Profile Analytics Service - 2 instances
+  profile-analytics-1:
+    build:
+      context: ./services/profile-analytics
+      dockerfile: Dockerfile
+    hostname: profile-analytics-1
+    environment:
+      <<: *common-variables
+      AZURE_TEXT_ANALYTICS_KEY: ${AZURE_TEXT_ANALYTICS_KEY}
+      AZURE_TEXT_ANALYTICS_ENDPOINT: ${AZURE_TEXT_ANALYTICS_ENDPOINT}
+      INSTANCE_ID: profile-analytics-1
+      SERVICE_NAME: profile-analytics
+      SERVICE_PORT: 3004
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/profile-analytics-1:/app/logs
+    <<: *common-logging
+
+  profile-analytics-2:
+    build:
+      context: ./services/profile-analytics
+      dockerfile: Dockerfile
+    hostname: profile-analytics-2
+    environment:
+      <<: *common-variables
+      AZURE_TEXT_ANALYTICS_KEY: ${AZURE_TEXT_ANALYTICS_KEY}
+      AZURE_TEXT_ANALYTICS_ENDPOINT: ${AZURE_TEXT_ANALYTICS_ENDPOINT}
+      INSTANCE_ID: profile-analytics-2
+      SERVICE_NAME: profile-analytics
+      SERVICE_PORT: 3004
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/profile-analytics-2:/app/logs
+    <<: *common-logging
+
+  # ===========================================
+  # Support Services (Single Instance)
+  # ===========================================
+
+  user-management:
+    build:
+      context: ./services/user-management
+      dockerfile: Dockerfile
+    hostname: user-management
+    environment:
+      <<: *common-variables
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      INSTANCE_ID: user-management-1
+      SERVICE_NAME: user-management
+      SERVICE_PORT: 3005
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/user-management:/app/logs
+    <<: *common-logging
+
+  smart-whitelist:
+    build:
+      context: ./services/smart-whitelist
+      dockerfile: Dockerfile
+    hostname: smart-whitelist
+    environment:
+      <<: *common-variables
+      INSTANCE_ID: smart-whitelist-1
+      SERVICE_NAME: smart-whitelist
+      SERVICE_PORT: 3006
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/smart-whitelist:/app/logs
+    <<: *common-logging
+
+  # ===========================================
+  # Platform Services
+  # ===========================================
+
+  configuration:
+    build:
+      context: ./services/configuration
+      dockerfile: Dockerfile
+    hostname: configuration
+    environment:
+      <<: *common-variables
+      INSTANCE_ID: configuration-1
+      SERVICE_NAME: configuration
+      SERVICE_PORT: 3007
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/configuration:/app/logs
+    <<: *common-logging
+
+  storage:
+    build:
+      context: ./services/storage
+      dockerfile: Dockerfile
+    hostname: storage
+    environment:
+      <<: *common-variables
+      AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING}
+      INSTANCE_ID: storage-1
+      SERVICE_NAME: storage
+      SERVICE_PORT: 3008
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3008/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/storage:/app/logs
+      - ./data/storage:/app/data
+    <<: *common-logging
+
+  monitoring:
+    build:
+      context: ./services/monitoring
+      dockerfile: Dockerfile
+    hostname: monitoring
+    environment:
+      <<: *common-variables
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL}
+      INSTANCE_ID: monitoring-1
+      SERVICE_NAME: monitoring
+      SERVICE_PORT: 3009
+      CONSUL_URL: http://consul:8500
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3009/health"]
+      <<: *common-healthcheck
+    volumes:
+      - ./logs/monitoring:/app/logs
+      - ./config/prometheus:/etc/prometheus
+      - ./config/grafana:/etc/grafana
+      - prometheus_data:/prometheus
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "9090:9090"  # Prometheus
+      - "3000:3000"  # Grafana
+    <<: *common-logging
+
+  # ===========================================
+  # Data Layer with HA Configuration
+  # ===========================================
+
+  postgres:
+    image: postgres:15-alpine
+    hostname: postgres-primary
+    environment:
+      POSTGRES_DB: ai_ninja
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
+      POSTGRES_REPLICATION_MODE: master
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD}
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_ninja"]
+      <<: *common-healthcheck
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+      - ./database/backups:/backups
+      - ./config/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+    ports:
+      - "5432:5432"
+    command: >
+      postgres
+      -c config_file=/etc/postgresql/postgresql.conf
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.max=10000
+      -c pg_stat_statements.track=all
+      -c max_connections=200
+      -c shared_buffers=512MB
+      -c effective_cache_size=2GB
+      -c work_mem=8MB
+      -c maintenance_work_mem=128MB
+      -c wal_level=replica
+      -c max_wal_senders=3
+      -c max_replication_slots=3
+    <<: *common-logging
+
+  # Redis Cluster for high availability
+  redis-master:
+    image: redis:7-alpine
+    hostname: redis-master
+    environment:
+      REDIS_REPLICATION_MODE: master
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      <<: *common-healthcheck
+    volumes:
+      - redis_data:/data
+      - ./config/redis/redis-master.conf:/usr/local/etc/redis/redis.conf
+    ports:
+      - "6379:6379"
+    command: redis-server /usr/local/etc/redis/redis.conf
+    <<: *common-logging
+
+  redis-slave:
+    image: redis:7-alpine
+    hostname: redis-slave
+    environment:
+      REDIS_REPLICATION_MODE: slave
+      REDIS_MASTER_HOST: redis-master
+      REDIS_MASTER_PORT: 6379
+      REDIS_MASTER_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      <<: *common-healthcheck
+    volumes:
+      - redis_slave_data:/data
+      - ./config/redis/redis-slave.conf:/usr/local/etc/redis/redis.conf
+    ports:
+      - "6380:6379"
+    command: redis-server /usr/local/etc/redis/redis.conf
+    depends_on:
+      - redis-master
+    <<: *common-logging
+
+  # Redis Sentinel for automatic failover
+  redis-sentinel:
+    image: redis:7-alpine
+    hostname: redis-sentinel
+    environment:
+      REDIS_SENTINEL_QUORUM: 1
+      REDIS_MASTER_NAME: mymaster
+      REDIS_MASTER_HOST: redis-master
+      REDIS_MASTER_PORT: 6379
+      REDIS_MASTER_PASSWORD: ${REDIS_PASSWORD}
+    networks:
+      - ai-ninja-network
+    restart: unless-stopped
+    volumes:
+      - ./config/redis/sentinel.conf:/usr/local/etc/redis/sentinel.conf
+    ports:
+      - "26379:26379"
+    command: redis-sentinel /usr/local/etc/redis/sentinel.conf
+    depends_on:
+      - redis-master
+      - redis-slave
+    <<: *common-logging
+
+networks:
+  ai-ninja-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
+
+volumes:
+  consul_data:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  redis_slave_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local

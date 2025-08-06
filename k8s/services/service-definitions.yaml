@@ -1,0 +1,295 @@
+# AI Answer Ninja - Service Definitions
+# Kubernetes native service discovery and load balancing
+
+---
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: ai-ninja
+  labels:
+    app: postgres
+    tier: database
+spec:
+  selector:
+    app: postgres
+    role: primary
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres
+  type: ClusterIP
+
+---
+# Redis Master Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-master-service
+  namespace: ai-ninja
+  labels:
+    app: redis
+    tier: cache
+    role: master
+spec:
+  selector:
+    app: redis
+    role: master
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  type: ClusterIP
+
+---
+# Redis Slave Service (Read-only)
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-slave-service
+  namespace: ai-ninja
+  labels:
+    app: redis
+    tier: cache
+    role: slave
+spec:
+  selector:
+    app: redis
+    role: slave
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  type: ClusterIP
+
+---
+# Phone Gateway Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: phone-gateway-service
+  namespace: ai-ninja
+  labels:
+    app: phone-gateway
+    tier: core
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "false"
+spec:
+  selector:
+    app: phone-gateway
+  ports:
+  - port: 3001
+    targetPort: 3001
+    name: http
+    protocol: TCP
+  type: ClusterIP
+  sessionAffinity: None
+
+---
+# Real-time Processor Service (Load Balanced)
+apiVersion: v1
+kind: Service
+metadata:
+  name: realtime-processor-service
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+    critical: "true"
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-mode: "cluster"
+spec:
+  selector:
+    app: realtime-processor
+  ports:
+  - port: 3002
+    targetPort: 3002
+    name: http
+    protocol: TCP
+  type: ClusterIP
+  sessionAffinity: None
+
+---
+# Conversation Engine Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: conversation-engine-service
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+spec:
+  selector:
+    app: conversation-engine
+  ports:
+  - port: 3003
+    targetPort: 3003
+    name: http
+    protocol: TCP
+  type: ClusterIP
+  sessionAffinity: None
+
+---
+# Profile Analytics Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: profile-analytics-service
+  namespace: ai-ninja
+  labels:
+    app: profile-analytics
+    tier: core
+spec:
+  selector:
+    app: profile-analytics
+  ports:
+  - port: 3004
+    targetPort: 3004
+    name: http
+    protocol: TCP
+  type: ClusterIP
+  sessionAffinity: None
+
+---
+# User Management Service (Session Affinity)
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-management-service
+  namespace: ai-ninja
+  labels:
+    app: user-management
+    tier: support
+spec:
+  selector:
+    app: user-management
+  ports:
+  - port: 3005
+    targetPort: 3005
+    name: http
+    protocol: TCP
+  type: ClusterIP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800  # 3 hours
+
+---
+# Smart Whitelist Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: smart-whitelist-service
+  namespace: ai-ninja
+  labels:
+    app: smart-whitelist
+    tier: support
+spec:
+  selector:
+    app: smart-whitelist
+  ports:
+  - port: 3006
+    targetPort: 3006
+    name: http
+    protocol: TCP
+  type: ClusterIP
+  sessionAffinity: None
+
+---
+# Configuration Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: configuration-service
+  namespace: ai-ninja
+  labels:
+    app: configuration
+    tier: platform
+spec:
+  selector:
+    app: configuration
+  ports:
+  - port: 3007
+    targetPort: 3007
+    name: http
+    protocol: TCP
+  type: ClusterIP
+  sessionAffinity: None
+
+---
+# Storage Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage-service
+  namespace: ai-ninja
+  labels:
+    app: storage
+    tier: platform
+spec:
+  selector:
+    app: storage
+  ports:
+  - port: 3008
+    targetPort: 3008
+    name: http
+    protocol: TCP
+  type: ClusterIP
+  sessionAffinity: None
+
+---
+# Monitoring Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring-service
+  namespace: ai-ninja
+  labels:
+    app: monitoring
+    tier: platform
+spec:
+  selector:
+    app: monitoring
+  ports:
+  - port: 3009
+    targetPort: 3009
+    name: http
+    protocol: TCP
+  - port: 9090
+    targetPort: 9090
+    name: prometheus
+    protocol: TCP
+  - port: 3000
+    targetPort: 3000
+    name: grafana
+    protocol: TCP
+  type: ClusterIP
+
+---
+# Nginx Load Balancer Service (External Access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-lb-service
+  namespace: ai-ninja
+  labels:
+    app: nginx
+    tier: gateway
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "false"
+    service.beta.kubernetes.io/azure-dns-label-name: "ai-ninja-api"
+spec:
+  selector:
+    app: nginx
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+    protocol: TCP
+  - port: 443
+    targetPort: 443
+    name: https
+    protocol: TCP
+  type: LoadBalancer
