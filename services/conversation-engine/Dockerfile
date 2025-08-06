@@ -61,3 +61,47 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Start command
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3003", "--workers", "1"]
+
+# ===========================================
+# Development stage
+# ===========================================
+FROM python:3.11-slim as development
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH="/app"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash app
+
+# Create app directory and set permissions
+WORKDIR /app
+RUN chown -R app:app /app
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
+
+# Copy application code
+COPY --chown=app:app . .
+
+# Switch to non-root user
+USER app
+
+# Expose port
+EXPOSE 3003
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3003/health/ || exit 1
+
+# Start in development mode with hot reload
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3003", "--reload"]

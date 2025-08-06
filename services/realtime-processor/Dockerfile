@@ -13,11 +13,13 @@ RUN apk add --no-cache \
     libc6-compat
 
 # Copy package files
-COPY package.json package-lock.json ./
+COPY package.json ./
 COPY tsconfig.json ./
+# Copy package-lock.json if it exists
+COPY package-lock*.json ./
 
 # Install dependencies
-RUN npm ci --only=production --ignore-scripts
+RUN npm ci --only=production --ignore-scripts || npm install --only=production
 
 # Copy source code
 COPY src/ ./src/
@@ -47,8 +49,9 @@ RUN apk add --no-cache \
     && rm -rf /var/cache/apk/*
 
 # Copy package files and install production dependencies
-COPY package.json package-lock.json ./
-RUN npm ci --only=production --ignore-scripts && \
+COPY package.json ./
+COPY package-lock*.json ./
+RUN npm ci --only=production --ignore-scripts || npm install --only=production && \
     npm cache clean --force
 
 # Copy built application from builder stage
@@ -97,10 +100,11 @@ RUN apk add --no-cache \
     libc6-compat
 
 # Copy package files
-COPY package.json package-lock.json tsconfig.json ./
+COPY package.json tsconfig.json ./
+COPY package-lock*.json ./
 
 # Install all dependencies
-RUN npm ci
+RUN npm ci || npm install
 
 # Copy source code
 COPY . .
