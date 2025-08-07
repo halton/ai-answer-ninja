@@ -1,0 +1,161 @@
+version: '3.8'
+
+services:
+  conversation-analyzer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3010:3010"
+    environment:
+      # Service Configuration
+      SERVICE_NAME: conversation-analyzer
+      SERVICE_PORT: 3010
+      DEBUG: true
+      LOG_LEVEL: INFO
+      
+      # Database Configuration
+      DATABASE_URL: postgresql://ai_ninja:ai_ninja_password@postgres:5432/ai_ninja
+      REDIS_URL: redis://redis:6379
+      
+      # Azure Services (override with actual values)
+      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY}
+      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+      AZURE_OPENAI_DEPLOYMENT_NAME: ${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4}
+      
+      # Storage Configuration
+      AZURE_STORAGE_ACCOUNT: ${AZURE_STORAGE_ACCOUNT}
+      AZURE_STORAGE_KEY: ${AZURE_STORAGE_KEY}
+      
+      # ML Configuration
+      HUGGINGFACE_CACHE_DIR: /app/cache/huggingface
+      SPACY_MODEL: zh_core_web_sm
+      TORCH_DEVICE: cpu
+      
+      # Performance Configuration
+      MAX_CONCURRENT_ANALYSES: 5
+      CACHE_TTL: 3600
+      BATCH_SIZE: 16
+      
+      # Service Integration
+      PROFILE_ANALYTICS_URL: http://profile-analytics:3004
+      REALTIME_PROCESSOR_URL: http://realtime-processor:3002
+      CONVERSATION_ENGINE_URL: http://conversation-engine:3003
+      USER_MANAGEMENT_URL: http://user-management:3005
+      
+      # Security
+      SECRET_KEY: ${SECRET_KEY:-conversation-analyzer-secret-key-please-change}
+      ALLOWED_ORIGINS: "*"
+      
+      # Monitoring
+      ENABLE_METRICS: true
+      SENTRY_DSN: ${SENTRY_DSN}
+      
+    volumes:
+      - conversation_analyzer_cache:/app/cache
+      - conversation_analyzer_logs:/app/logs
+    
+    depends_on:
+      - postgres
+      - redis
+    
+    networks:
+      - ai-ninja-network
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Background task processor (separate instance)
+  conversation-analyzer-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      # Same environment as main service
+      SERVICE_NAME: conversation-analyzer-worker
+      SERVICE_PORT: 3011
+      DEBUG: true
+      LOG_LEVEL: INFO
+      DATABASE_URL: postgresql://ai_ninja:ai_ninja_password@postgres:5432/ai_ninja
+      REDIS_URL: redis://redis:6379
+      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY}
+      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+      HUGGINGFACE_CACHE_DIR: /app/cache/huggingface
+      MAX_CONCURRENT_ANALYSES: 3
+      SECRET_KEY: ${SECRET_KEY:-conversation-analyzer-secret-key-please-change}
+    
+    command: ["python", "-c", "
+      import asyncio;
+      from app.pipelines.realtime_processor import realtime_pipeline;
+      from app.core.database import db_manager;
+      from app.core.cache import cache_manager;
+      from app.core.logging import setup_logging;
+      
+      async def main():
+          setup_logging();
+          await db_manager.initialize();
+          await cache_manager.initialize();
+          await realtime_pipeline.initialize();
+          await realtime_pipeline.process_queued_tasks();
+      
+      asyncio.run(main())
+    "]
+    
+    volumes:
+      - conversation_analyzer_cache:/app/cache
+      - conversation_analyzer_logs:/app/logs
+    
+    depends_on:
+      - postgres
+      - redis
+      - conversation-analyzer
+    
+    networks:
+      - ai-ninja-network
+    
+    restart: unless-stopped
+
+  # Dependencies (if not already running)
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ai_ninja
+      POSTGRES_USER: ai_ninja
+      POSTGRES_PASSWORD: ai_ninja_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../database/schemas:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - ai-ninja-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai-ninja-network
+    command: redis-server --appendonly yes
+
+volumes:
+  conversation_analyzer_cache:
+  conversation_analyzer_logs:
+  postgres_data:
+  redis_data:
+
+networks:
+  ai-ninja-network:
+    driver: bridge
