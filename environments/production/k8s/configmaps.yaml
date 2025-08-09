@@ -1,0 +1,179 @@
+# Production Environment ConfigMaps
+# Configuration for production environment
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-ninja-production-config
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    environment: production
+    tier: configuration
+data:
+  # Environment settings
+  NODE_ENV: "production"
+  LOG_LEVEL: "warn"
+  ENVIRONMENT: "production"
+  
+  # Database configuration (non-sensitive)
+  DB_HOST: "postgresql-production.internal"
+  DB_PORT: "5432"
+  DB_NAME: "ai_ninja_production"
+  DB_MAX_CONNECTIONS: "25"
+  DB_CONNECTION_TIMEOUT: "3000"
+  DB_SSL: "true"
+  DB_SSL_REQUIRE: "true"
+  DB_READ_REPLICA_ENABLED: "true"
+  DB_READ_REPLICA_HOST: "postgresql-replica.internal"
+  
+  # Redis configuration (non-sensitive)
+  REDIS_HOST: "redis-production.internal"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_CLUSTER_MODE: "true"
+  REDIS_SENTINEL_ENABLED: "true"
+  
+  # Azure Services (Production)
+  AZURE_SPEECH_REGION: "eastus2"
+  AZURE_OPENAI_ENDPOINT: "https://ai-ninja-prod-openai.openai.azure.com"
+  AZURE_SPEECH_ENDPOINT: "https://ai-ninja-prod-speech.cognitiveservices.azure.com"
+  
+  # Feature flags (production)
+  FEATURE_EMAIL_VERIFICATION_REQUIRED: "true"
+  FEATURE_MFA_REQUIRED: "true"
+  FEATURE_RATE_LIMITING_ENABLED: "true"
+  FEATURE_AUDIT_LOGGING_ENABLED: "true"
+  FEATURE_SECURITY_HEADERS_ENABLED: "true"
+  FEATURE_MOCK_AZURE_SERVICES: "false"
+  
+  # Performance settings (optimized)
+  MAX_CONCURRENT_CALLS: "2000"
+  WEBSOCKET_TIMEOUT: "180000"
+  HTTP_TIMEOUT: "15000"
+  AUDIO_PROCESSING_TIMEOUT: "3000"
+  PROCESSING_PIPELINE_TIMEOUT: "800"
+  
+  # Scaling configuration (production)
+  MIN_REPLICAS_CRITICAL: "5"
+  MIN_REPLICAS_STANDARD: "3"
+  MAX_REPLICAS_CRITICAL: "25"
+  MAX_REPLICAS_STANDARD: "15"
+  TARGET_CPU_UTILIZATION: "60"
+  TARGET_MEMORY_UTILIZATION: "70"
+  SCALE_UP_COOLDOWN: "60"
+  SCALE_DOWN_COOLDOWN: "300"
+  
+  # CORS (strict)
+  CORS_ORIGINS: "https://app.ai-ninja.com,https://admin.ai-ninja.com"
+  CORS_CREDENTIALS: "true"
+  CORS_MAX_AGE: "86400"
+  
+  # Rate limiting (strict)
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_WINDOW: "300"
+  RATE_LIMIT_MAX_REQUESTS: "100"
+  RATE_LIMIT_BURST_SIZE: "20"
+  RATE_LIMIT_REDIS_KEY_PREFIX: "prod:rate_limit"
+  
+  # SSL/TLS (strict)
+  SSL_ENABLED: "true"
+  CERT_MANAGER_ISSUER: "letsencrypt-prod"
+  FORCE_HTTPS: "true"
+  HSTS_ENABLED: "true"
+  HSTS_MAX_AGE: "31536000"
+  TLS_MIN_VERSION: "1.2"
+  
+  # Monitoring (comprehensive)
+  METRICS_ENABLED: "true"
+  HEALTH_CHECK_INTERVAL: "5"
+  PROMETHEUS_METRICS_PORT: "9090"
+  JAEGER_ENABLED: "true"
+  GRAFANA_ENABLED: "true"
+  ALERTING_ENABLED: "true"
+  SENTRY_ENABLED: "true"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-ninja-production-service-config
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    environment: production
+    tier: configuration
+data:
+  # Docker Registry (Production)
+  DOCKER_REGISTRY: "ghcr.io/ai-ninja"
+  REGISTRY_URL: "ghcr.io"
+  PUSH_IMAGES: "true"
+  IMAGE_SECURITY_SCANNING: "true"
+  
+  # Audio processing settings (optimized)
+  AUDIO_SAMPLE_RATE: "16000"
+  AUDIO_CHANNELS: "1"
+  AUDIO_BUFFER_SIZE: "2048"
+  AUDIO_FORMAT: "wav"
+  
+  # WebSocket configuration (optimized)
+  WS_MAX_CONNECTIONS_PER_POD: "200"
+  WS_HEARTBEAT_INTERVAL: "15000"
+  WS_CONNECTION_TIMEOUT: "30000"
+  
+  # Storage configuration (production)
+  STORAGE_CLASS: "fast-ssd"
+  BACKUP_ENABLED: "true"
+  BACKUP_RETENTION_DAYS: "90"
+  BACKUP_SCHEDULE: "0 1 * * *"
+  BACKUP_ENCRYPTION: "true"
+  DISASTER_RECOVERY_ENABLED: "true"
+  
+  # Cache configuration (optimized)
+  CACHE_TTL_DEFAULT: "1800"
+  CACHE_TTL_USER_PROFILE: "900"
+  CACHE_TTL_WHITELIST: "300"
+  CACHE_WARMING_ENABLED: "true"
+  CACHE_COMPRESSION_ENABLED: "true"
+  
+  # External services (production)
+  EXTERNAL_API_TIMEOUT: "5000"
+  RETRY_ATTEMPTS: "3"
+  RETRY_BACKOFF: "exponential"
+  CIRCUIT_BREAKER_ENABLED: "true"
+  CIRCUIT_BREAKER_THRESHOLD: "5"
+  CIRCUIT_BREAKER_TIMEOUT: "30000"
+  
+  # Security settings
+  NETWORK_POLICIES_ENABLED: "true"
+  POD_SECURITY_STANDARDS: "restricted"
+  SERVICE_MESH_ENABLED: "true"
+  MTLS_ENABLED: "true"
+  INGRESS_WAF_ENABLED: "true"
+  
+  # Compliance
+  GDPR_COMPLIANCE_ENABLED: "true"
+  DATA_RETENTION_POLICY_ENABLED: "true"
+  AUDIT_LOG_RETENTION_DAYS: "2555"
+  PII_ENCRYPTION_ENABLED: "true"
+  RIGHT_TO_BE_FORGOTTEN_ENABLED: "true"
+  
+  # Performance optimization
+  CONNECTION_POOLING_ENABLED: "true"
+  QUERY_CACHING_ENABLED: "true"
+  RESPONSE_COMPRESSION_ENABLED: "true"
+  CDN_ENABLED: "true"
+  EDGE_CACHING_ENABLED: "true"
+  
+  # Business continuity
+  HIGH_AVAILABILITY_ENABLED: "true"
+  MULTI_AZ_DEPLOYMENT: "true"
+  DISASTER_RECOVERY_RPO: "1h"
+  DISASTER_RECOVERY_RTO: "4h"
+  FAILOVER_TESTING_ENABLED: "true"
+  
+  # Testing (production)
+  INTEGRATION_TESTS_ENABLED: "false"
+  LOAD_TESTING_ENABLED: "false"
+  SMOKE_TESTS_ENABLED: "true"
+  CANARY_DEPLOYMENT_ENABLED: "true"

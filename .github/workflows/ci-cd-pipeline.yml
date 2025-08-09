@@ -1,0 +1,715 @@
+name: AI Phone System CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target deployment environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - production
+      skip_tests:
+        description: 'Skip test execution'
+        required: false
+        default: false
+        type: boolean
+      force_deploy:
+        description: 'Force deployment even if tests fail'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: '18'
+  GO_VERSION: '1.21'
+  PYTHON_VERSION: '3.11'
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_TAG: ${{ github.sha }}
+  
+jobs:
+  # Stage 1: Code Quality and Security Checks
+  code-quality:
+    name: Code Quality & Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Full history for better analysis
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+        
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install Dependencies
+      run: |
+        # Root dependencies
+        npm install
+        
+        # Service-specific dependencies
+        cd services/realtime-processor && npm install
+        cd ../user-management && npm install
+        cd ../smart-whitelist && go mod download
+        cd ../conversation-engine && pip install -r requirements.txt
+        cd ../profile-analytics && pip install -r requirements.txt
+        cd ../conversation-analyzer && pip install -r requirements.txt
+        
+        # Shared dependencies
+        cd ../../shared/service-communication && npm install
+    
+    - name: Lint Code
+      run: |
+        # TypeScript/JavaScript linting
+        npm run lint
+        cd services/realtime-processor && npm run lint
+        cd ../user-management && npm run lint
+        cd ../../shared/service-communication && npm run lint
+        
+        # Go linting
+        cd services/smart-whitelist && golangci-lint run ./...
+        
+        # Python linting
+        cd services/conversation-engine && flake8 . --max-line-length=100
+        cd ../profile-analytics && flake8 . --max-line-length=100
+        cd ../conversation-analyzer && flake8 . --max-line-length=100
+    
+    - name: Security Scanning
+      run: |
+        # Node.js security audit
+        npm audit --audit-level=moderate
+        cd services/realtime-processor && npm audit --audit-level=moderate
+        cd ../user-management && npm audit --audit-level=moderate
+        
+        # Go security scanning
+        cd services/smart-whitelist && gosec ./...
+        
+        # Python security scanning  
+        cd services/conversation-engine && safety check -r requirements.txt
+        cd ../profile-analytics && safety check -r requirements.txt
+    
+    - name: Static Code Analysis
+      uses: github/super-linter@v4
+      env:
+        DEFAULT_BRANCH: main
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        VALIDATE_ALL_CODEBASE: false
+        VALIDATE_TYPESCRIPT_ES: true
+        VALIDATE_PYTHON_FLAKE8: true
+        VALIDATE_GO: true
+        VALIDATE_DOCKER_HADOLINT: true
+        VALIDATE_YAML: true
+        VALIDATE_JSON: true
+
+  # Stage 2: Unit and Integration Tests
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: code-quality
+    if: ${{ !inputs.skip_tests }}
+    
+    strategy:
+      matrix:
+        service: [realtime-processor, user-management, smart-whitelist, conversation-engine, profile-analytics, conversation-analyzer]
+        
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Setup Runtime Environment
+      run: |
+        if [[ "${{ matrix.service }}" == *"processor"* ]] || [[ "${{ matrix.service }}" == *"management"* ]]; then
+          echo "RUNTIME=node" >> $GITHUB_ENV
+        elif [[ "${{ matrix.service }}" == *"whitelist"* ]]; then
+          echo "RUNTIME=go" >> $GITHUB_ENV
+        else
+          echo "RUNTIME=python" >> $GITHUB_ENV
+        fi
+    
+    - name: Setup Node.js
+      if: env.RUNTIME == 'node'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Setup Go
+      if: env.RUNTIME == 'go'
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+        
+    - name: Setup Python
+      if: env.RUNTIME == 'python'
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install Dependencies
+      run: |
+        cd services/${{ matrix.service }}
+        if [[ "${{ env.RUNTIME }}" == "node" ]]; then
+          npm install
+        elif [[ "${{ env.RUNTIME }}" == "go" ]]; then
+          go mod download
+        else
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-asyncio
+        fi
+    
+    - name: Run Unit Tests
+      run: |
+        cd services/${{ matrix.service }}
+        if [[ "${{ env.RUNTIME }}" == "node" ]]; then
+          npm run test:unit -- --coverage --ci
+        elif [[ "${{ env.RUNTIME }}" == "go" ]]; then
+          go test -v -race -coverprofile=coverage.out ./...
+        else
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=html
+        fi
+    
+    - name: Upload Coverage Reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./services/${{ matrix.service }}/coverage.*
+        flags: ${{ matrix.service }}
+        name: ${{ matrix.service }}-coverage
+
+  # Stage 3: Integration Tests  
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: unit-tests
+    if: ${{ !inputs.skip_tests }}
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: ai_ninja_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: testpass
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Install Dependencies
+      run: |
+        npm install
+        cd shared/service-communication && npm install
+    
+    - name: Initialize Test Database
+      run: |
+        PGPASSWORD=testpass psql -h localhost -U test -d ai_ninja_test -f database/init/01-initialize-database.sql
+        PGPASSWORD=testpass psql -h localhost -U test -d ai_ninja_test -f database/schemas/01-core-tables.sql
+        PGPASSWORD=testpass psql -h localhost -U test -d ai_ninja_test -f database/seeds/development/01-sample-users.sql
+      env:
+        PGPASSWORD: testpass
+    
+    - name: Start Services for Integration Testing
+      run: |
+        # Start services in background for integration tests
+        docker-compose -f docker-compose.test.yml up -d
+        
+        # Wait for services to be healthy
+        timeout 120s bash -c 'until docker-compose -f docker-compose.test.yml ps | grep -q "healthy"; do sleep 2; done'
+      env:
+        DATABASE_URL: postgresql://test:testpass@localhost:5432/ai_ninja_test
+        REDIS_URL: redis://localhost:6379
+    
+    - name: Run API Integration Tests
+      run: |
+        cd tests/integration
+        npm install
+        npm run test:api
+      env:
+        DATABASE_URL: postgresql://test:testpass@localhost:5432/ai_ninja_test
+        REDIS_URL: redis://localhost:6379
+        
+    - name: Run WebSocket Integration Tests
+      run: |
+        cd tests/integration
+        npm run test:websocket
+      env:
+        WEBSOCKET_BASE_URL: ws://localhost:3002
+        
+    - name: Run Database Integration Tests
+      run: |
+        cd tests/integration
+        npm run test:database
+      env:
+        DATABASE_URL: postgresql://test:testpass@localhost:5432/ai_ninja_test
+        REDIS_URL: redis://localhost:6379
+    
+    - name: Run E2E Tests
+      run: |
+        cd tests/e2e
+        npm install
+        npm run test:e2e -- --env=test
+      env:
+        E2E_BASE_URL: http://localhost:3000
+
+  # Stage 4: Build and Push Docker Images
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: integration-tests
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    
+    strategy:
+      matrix:
+        service: [realtime-processor, user-management, smart-whitelist, conversation-engine, profile-analytics, conversation-analyzer, admin-panel]
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.DOCKER_REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}-${{ matrix.service }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./services/${{ matrix.service }}/Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
+        build-args: |
+          BUILD_DATE=${{ github.event.head_commit.timestamp }}
+          VCS_REF=${{ github.sha }}
+          VERSION=${{ github.ref_name }}
+
+  # Stage 5: Security Scanning of Images
+  image-security:
+    name: Image Security Scanning
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: build-images
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    
+    strategy:
+      matrix:
+        service: [realtime-processor, user-management, smart-whitelist, conversation-engine, profile-analytics, conversation-analyzer, admin-panel]
+    
+    steps:
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}-${{ matrix.service }}:${{ github.sha }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # Stage 6: Load Testing (on main branch)
+  load-testing:
+    name: Load Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: build-images
+    if: github.ref == 'refs/heads/main' && !inputs.skip_tests
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Setup Load Test Environment
+      run: |
+        docker-compose -f docker-compose.test.yml up -d
+        
+        # Wait for services to be healthy
+        timeout 120s bash -c 'until docker-compose -f docker-compose.test.yml ps | grep -q "healthy"; do sleep 2; done'
+    
+    - name: Install Load Test Dependencies
+      run: |
+        cd tests/load
+        npm install
+    
+    - name: Run Light Load Tests
+      run: |
+        cd tests/load
+        npm run test:load -- --profile=light --env=test
+        
+    - name: Run Normal Load Tests
+      if: success() || failure() # Run even if light tests fail
+      run: |
+        cd tests/load  
+        npm run test:load -- --profile=normal --env=test
+    
+    - name: Upload Load Test Reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: load-test-reports
+        path: tests/load/reports/
+        retention-days: 30
+
+  # Stage 7: Deploy to Development
+  deploy-dev:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [build-images, image-security]
+    if: github.ref == 'refs/heads/develop' && (success() || inputs.force_deploy)
+    environment: 
+      name: development
+      url: https://dev.ai-ninja.com
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Setup Kubernetes
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+    
+    - name: Configure Kubernetes Context
+      run: |
+        echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > kubeconfig
+        export KUBECONFIG=kubeconfig
+        kubectl config current-context
+    
+    - name: Deploy to Development
+      run: |
+        export KUBECONFIG=kubeconfig
+        
+        # Update image tags in deployment manifests
+        sed -i "s|IMAGE_TAG|${{ github.sha }}|g" k8s/deployments/core-services.yaml
+        
+        # Apply Kubernetes manifests
+        kubectl apply -f k8s/namespaces/ai-ninja-namespace.yaml
+        kubectl apply -f k8s/configmaps/app-config.yaml
+        kubectl apply -f k8s/secrets/app-secrets.yaml
+        kubectl apply -f k8s/deployments/
+        kubectl apply -f k8s/services/
+        kubectl apply -f k8s/ingress/
+        
+        # Wait for rollout to complete
+        kubectl rollout status deployment/realtime-processor -n ai-ninja --timeout=300s
+        kubectl rollout status deployment/user-management -n ai-ninja --timeout=300s
+        kubectl rollout status deployment/smart-whitelist -n ai-ninja --timeout=300s
+        kubectl rollout status deployment/conversation-engine -n ai-ninja --timeout=300s
+        kubectl rollout status deployment/profile-analytics -n ai-ninja --timeout=300s
+    
+    - name: Run Smoke Tests
+      run: |
+        # Wait for services to be ready
+        sleep 60
+        
+        # Run basic health checks
+        kubectl get pods -n ai-ninja
+        kubectl get services -n ai-ninja
+        
+        # Test service endpoints
+        curl -f https://dev.ai-ninja.com/health || exit 1
+        
+    - name: Notify Deployment Status
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#deployments'
+        text: 'Development deployment completed'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+      if: always()
+
+  # Stage 8: Deploy to Staging  
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [load-testing, deploy-dev]
+    if: github.ref == 'refs/heads/main' && (success() || inputs.force_deploy)
+    environment:
+      name: staging
+      url: https://staging.ai-ninja.com
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Setup Kubernetes
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+    
+    - name: Configure Kubernetes Context
+      run: |
+        echo "${{ secrets.KUBECONFIG_STAGING }}" | base64 -d > kubeconfig
+        export KUBECONFIG=kubeconfig
+        kubectl config current-context
+    
+    - name: Deploy to Staging
+      run: |
+        export KUBECONFIG=kubeconfig
+        
+        # Blue-Green Deployment Strategy
+        # Update image tags
+        sed -i "s|IMAGE_TAG|${{ github.sha }}|g" k8s/deployments/core-services.yaml
+        
+        # Deploy new version (green)
+        kubectl apply -f k8s/deployments/ --selector=version=green
+        
+        # Wait for green deployment to be ready
+        kubectl rollout status deployment/realtime-processor-green -n ai-ninja --timeout=600s
+        
+        # Run health checks on green deployment
+        ./scripts/health-check.sh green
+        
+        # Switch traffic to green deployment
+        kubectl patch service api-gateway -n ai-ninja -p '{"spec":{"selector":{"version":"green"}}}'
+        
+        # Wait and verify
+        sleep 30
+        ./scripts/health-check.sh production
+        
+        # Clean up old blue deployment
+        kubectl delete deployment --selector=version=blue -n ai-ninja
+    
+    - name: Run Comprehensive Tests
+      run: |
+        # Wait for staging to stabilize
+        sleep 60
+        
+        # Run full E2E test suite against staging
+        cd tests/e2e
+        npm run test:e2e -- --env=staging --timeout=60000
+    
+    - name: Performance Regression Testing
+      run: |
+        cd tests/load
+        npm run test:performance-regression -- --env=staging --baseline=main
+
+  # Stage 9: Production Deployment (Manual Approval Required)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: deploy-staging
+    if: (github.ref == 'refs/heads/main' && inputs.environment == 'production') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    environment:
+      name: production
+      url: https://api.ai-ninja.com
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Manual Approval Gate
+      uses: trstringer/manual-approval@v1
+      with:
+        secret: ${{ secrets.GITHUB_TOKEN }}
+        approvers: ${{ secrets.PRODUCTION_APPROVERS }}
+        minimum-approvals: 2
+        issue-title: "Production Deployment Approval Required"
+        issue-body: |
+          **Production Deployment Request**
+          
+          - **Branch**: ${{ github.ref_name }}
+          - **Commit**: ${{ github.sha }}
+          - **Author**: ${{ github.actor }}
+          - **Changes**: [View Diff](${{ github.event.compare }})
+          
+          **Pre-deployment Checklist:**
+          - [ ] Staging tests passed
+          - [ ] Load tests completed successfully  
+          - [ ] Security scans passed
+          - [ ] Database migrations reviewed
+          - [ ] Rollback plan confirmed
+          
+          Please review and approve this production deployment.
+        exclude-workflow-initiator-as-approver: false
+    
+    - name: Setup Kubernetes
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+    
+    - name: Configure Production Kubernetes Context
+      run: |
+        echo "${{ secrets.KUBECONFIG_PRODUCTION }}" | base64 -d > kubeconfig
+        export KUBECONFIG=kubeconfig
+        kubectl config current-context
+    
+    - name: Pre-deployment Backup
+      run: |
+        export KUBECONFIG=kubeconfig
+        
+        # Create backup of current deployment
+        kubectl get deployment --all-namespaces -o yaml > pre-deployment-backup-$(date +%Y%m%d-%H%M%S).yaml
+        
+        # Database backup (if applicable)
+        ./scripts/backup-production-db.sh
+    
+    - name: Canary Deployment
+      run: |
+        export KUBECONFIG=kubeconfig
+        
+        # Deploy 10% traffic to new version (canary)
+        sed -i "s|IMAGE_TAG|${{ github.sha }}|g" k8s/deployments/core-services.yaml
+        kubectl apply -f k8s/deployments/ --selector=deployment-type=canary
+        
+        # Configure traffic splitting (10% to canary, 90% to stable)
+        kubectl apply -f k8s/canary/traffic-split.yaml
+        
+        # Monitor canary deployment
+        ./scripts/monitor-canary.sh --duration=300 --error-threshold=0.01
+    
+    - name: Full Production Deployment
+      run: |
+        export KUBECONFIG=kubeconfig
+        
+        # If canary is healthy, proceed with full deployment
+        if ./scripts/canary-health-check.sh; then
+          echo "Canary deployment healthy, proceeding with full deployment"
+          
+          # Gradually increase traffic to new version
+          kubectl apply -f k8s/canary/traffic-split-50.yaml
+          sleep 60
+          ./scripts/monitor-deployment.sh --duration=120
+          
+          kubectl apply -f k8s/canary/traffic-split-100.yaml
+          sleep 60
+          
+          # Final health check
+          ./scripts/health-check.sh production
+          
+          # Clean up old deployment
+          kubectl delete deployment --selector=version=previous -n ai-ninja
+          
+          echo "Production deployment completed successfully"
+        else
+          echo "Canary deployment failed health checks, rolling back"
+          kubectl rollout undo deployment/api-gateway -n ai-ninja
+          exit 1
+        fi
+    
+    - name: Post-deployment Verification
+      run: |
+        # Comprehensive post-deployment checks
+        ./scripts/production-verification.sh
+        
+        # Monitor key metrics for 5 minutes
+        ./scripts/monitor-production-metrics.sh --duration=300
+    
+    - name: Notify Production Deployment
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#production-deployments'
+        text: |
+          🚀 Production deployment completed!
+          
+          **Details:**
+          - Commit: ${{ github.sha }}
+          - Branch: ${{ github.ref_name }}
+          - Deployed by: ${{ github.actor }}
+          - Status: ${{ job.status }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+      if: always()
+
+  # Cleanup Job
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [deploy-production, deploy-staging, deploy-dev]
+    if: always()
+    
+    steps:
+    - name: Clean up test resources
+      run: |
+        # Clean up any test resources, temporary files, etc.
+        echo "Cleaning up CI/CD resources..."
+        
+        # Remove old Docker images (keep last 5)
+        docker image prune -af --filter="label=org.opencontainers.image.source=https://github.com/${{ github.repository }}"
+        
+    - name: Update deployment status
+      run: |
+        # Update deployment tracking or notifications
+        echo "Deployment pipeline completed"

@@ -1,0 +1,108 @@
+# Development Environment ConfigMaps
+# Configuration for local development with Docker Compose
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-ninja-dev-config
+  namespace: ai-ninja-dev
+  labels:
+    app: ai-ninja
+    environment: development
+    tier: configuration
+data:
+  # Environment settings
+  NODE_ENV: "development"
+  LOG_LEVEL: "debug"
+  ENVIRONMENT: "development"
+  
+  # Database configuration (non-sensitive)
+  DB_HOST: "postgres-dev"
+  DB_PORT: "5432"
+  DB_NAME: "ai_ninja_dev"
+  DB_MAX_CONNECTIONS: "10"
+  DB_CONNECTION_TIMEOUT: "5000"
+  DB_SSL: "false"
+  
+  # Redis configuration (non-sensitive)
+  REDIS_HOST: "redis-dev"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  
+  # Azure Services (Mock endpoints for development)
+  AZURE_SPEECH_REGION: "eastus"
+  AZURE_OPENAI_ENDPOINT: "http://localhost:8080/mock-openai"
+  
+  # Feature flags (relaxed for development)
+  FEATURE_EMAIL_VERIFICATION_REQUIRED: "false"
+  FEATURE_MFA_REQUIRED: "false"
+  FEATURE_RATE_LIMITING_ENABLED: "false"
+  FEATURE_AUDIT_LOGGING_ENABLED: "true"
+  FEATURE_SECURITY_HEADERS_ENABLED: "false"
+  FEATURE_MOCK_AZURE_SERVICES: "true"
+  
+  # Performance settings (relaxed for development)
+  MAX_CONCURRENT_CALLS: "100"
+  WEBSOCKET_TIMEOUT: "600000"
+  HTTP_TIMEOUT: "60000"
+  AUDIO_PROCESSING_TIMEOUT: "10000"
+  PROCESSING_PIPELINE_TIMEOUT: "3000"
+  
+  # Development-specific settings
+  HOT_RELOAD_ENABLED: "true"
+  DEBUG_MODE: "true"
+  DEV_TOOLS_ENABLED: "true"
+  MOCK_EXTERNAL_SERVICES: "true"
+  
+  # CORS (permissive for development)
+  CORS_ORIGINS: "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000"
+  CORS_CREDENTIALS: "true"
+  
+  # Rate limiting (disabled)
+  RATE_LIMIT_ENABLED: "false"
+  RATE_LIMIT_WINDOW: "3600"
+  RATE_LIMIT_MAX_REQUESTS: "10000"
+  
+  # Monitoring
+  METRICS_ENABLED: "true"
+  HEALTH_CHECK_INTERVAL: "30"
+  PROMETHEUS_METRICS_PORT: "9090"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-ninja-dev-service-config
+  namespace: ai-ninja-dev
+  labels:
+    app: ai-ninja
+    environment: development
+    tier: configuration
+data:
+  # Service ports (Docker Compose)
+  USER_MANAGEMENT_PORT: "3005"
+  SMART_WHITELIST_PORT: "3006"
+  REALTIME_PROCESSOR_PORT: "3002"
+  CONVERSATION_ENGINE_PORT: "3003"
+  PROFILE_ANALYTICS_PORT: "3004"
+  CONVERSATION_ANALYZER_PORT: "3007"
+  
+  # Docker Registry (Local)
+  DOCKER_REGISTRY: "local"
+  REGISTRY_URL: "localhost:5000"
+  
+  # Audio processing settings (relaxed)
+  AUDIO_SAMPLE_RATE: "16000"
+  AUDIO_CHANNELS: "1"
+  AUDIO_BUFFER_SIZE: "4096"
+  AUDIO_FORMAT: "wav"
+  
+  # WebSocket configuration (relaxed)
+  WS_MAX_CONNECTIONS_PER_POD: "50"
+  WS_HEARTBEAT_INTERVAL: "30000"
+  WS_CONNECTION_TIMEOUT: "60000"
+  
+  # Testing configuration
+  TEST_DB_NAME: "ai_ninja_test"
+  TEST_REDIS_DB: "1"
+  ENABLE_TEST_ENDPOINTS: "true"

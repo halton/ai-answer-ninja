@@ -1,0 +1,355 @@
+# Multi-stage Python Dockerfile Template
+# Optimized for ML/AI workloads with security and performance focus
+
+# Build stage
+FROM python:3.11-slim AS builder
+
+# Build arguments
+ARG BUILD_DATE
+ARG VCS_REF
+ARG VERSION=latest
+
+# Metadata labels
+LABEL org.opencontainers.image.title="AI Ninja Python Service" \
+      org.opencontainers.image.description="Python microservice for AI Phone Answering System" \
+      org.opencontainers.image.created=$BUILD_DATE \
+      org.opencontainers.image.revision=$VCS_REF \
+      org.opencontainers.image.version=$VERSION \
+      org.opencontainers.image.source="https://github.com/ai-ninja/ai-answer-ninja" \
+      maintainer="AI Ninja Team"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Build tools
+    build-essential \
+    gcc \
+    g++ \
+    # System libraries
+    libffi-dev \
+    libssl-dev \
+    libpq-dev \
+    # For ML/AI libraries
+    libblas-dev \
+    liblapack-dev \
+    libatlas-base-dev \
+    gfortran \
+    # For audio processing
+    libsndfile1-dev \
+    ffmpeg \
+    # Utilities
+    curl \
+    git && \
+    # Cleanup
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Set working directory
+WORKDIR /app
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip and install build tools
+RUN pip install --upgrade pip setuptools wheel
+
+# Copy requirements first for better caching
+COPY requirements.txt requirements-dev.txt pyproject.toml ./
+
+# Install Python dependencies with cache mount
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-deps -r requirements.txt && \
+    # Install dev dependencies for building
+    pip install --no-deps -r requirements-dev.txt
+
+# Copy source code
+COPY app/ ./app/
+COPY scripts/ ./scripts/
+COPY config/ ./config/
+COPY ml/ ./ml/
+
+# Compile Python files and remove unnecessary files
+RUN python -m compileall -b app/ && \
+    find app/ -name "*.py" -delete && \
+    find app/ -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+# Production stage
+FROM python:3.11-slim AS production
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Essential runtime libraries
+    libpq5 \
+    libffi8 \
+    # For ML/AI libraries
+    libblas3 \
+    liblapack3 \
+    libatlas3-base \
+    # For audio processing
+    libsndfile1 \
+    ffmpeg \
+    # Health check utility
+    curl \
+    # Process management
+    dumb-init && \
+    # Cleanup
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create non-root user
+RUN groupadd -r appuser && useradd --no-log-init -r -g appuser appuser
+
+# Set working directory
+WORKDIR /app
+
+# Copy virtual environment from builder
+COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
+
+# Copy application code from builder
+COPY --from=builder --chown=appuser:appuser /app/app ./app/
+COPY --from=builder --chown=appuser:appuser /app/scripts ./scripts/
+COPY --from=builder --chown=appuser:appuser /app/config ./config/
+COPY --from=builder --chown=appuser:appuser /app/ml ./ml/
+
+# Copy runtime scripts
+COPY --chown=appuser:appuser scripts/healthcheck.py ./healthcheck.py
+COPY --chown=appuser:appuser scripts/start.sh ./start.sh
+
+# Create necessary directories
+RUN mkdir -p logs storage/models storage/temp && \
+    chown -R appuser:appuser /app && \
+    chmod +x start.sh
+
+# Switch to non-root user
+USER appuser
+
+# Set environment variables
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH="/app" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONIOENCODING=UTF-8 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python healthcheck.py || exit 1
+
+# Use dumb-init for proper signal handling
+ENTRYPOINT ["dumb-init", "--"]
+
+# Start the application
+CMD ["./start.sh"]
+
+# Development stage
+FROM python:3.11-slim AS development
+
+# Install development tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    libffi-dev \
+    libssl-dev \
+    libpq-dev \
+    libblas-dev \
+    liblapack-dev \
+    libatlas-base-dev \
+    gfortran \
+    libsndfile1-dev \
+    ffmpeg \
+    curl \
+    git \
+    vim \
+    htop \
+    tree && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install all dependencies including dev tools
+COPY requirements.txt requirements-dev.txt pyproject.toml ./
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install -r requirements.txt && \
+    pip install -r requirements-dev.txt && \
+    # Install development tools
+    pip install \
+    jupyter \
+    ipython \
+    black \
+    flake8 \
+    pytest \
+    pytest-cov \
+    pytest-asyncio \
+    pytest-xdist
+
+# Copy all source code
+COPY . .
+
+# Create directories
+RUN mkdir -p logs storage/models storage/temp
+
+# Set development environment
+ENV PYTHONPATH="/app" \
+    PYTHONUNBUFFERED=1 \
+    FLASK_ENV=development \
+    FASTAPI_ENV=development \
+    DEBUG=1
+
+EXPOSE 8000
+
+# Development command with hot reload
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+# Testing stage
+FROM development AS testing
+
+# Install additional testing tools
+RUN pip install \
+    pytest-benchmark \
+    pytest-mock \
+    pytest-timeout \
+    coverage \
+    bandit \
+    safety
+
+# Copy test files
+COPY tests/ ./tests/
+
+# Run all quality checks and tests
+RUN python -m flake8 app/ && \
+    python -m black --check app/ && \
+    python -m bandit -r app/ && \
+    python -m safety check && \
+    python -m pytest tests/ -v --cov=app --cov-report=xml --cov-report=html
+
+# ML Model training stage
+FROM development AS model-training
+
+# Install additional ML tools
+RUN pip install \
+    scikit-learn \
+    pandas \
+    numpy \
+    matplotlib \
+    seaborn \
+    jupyter \
+    tensorboard
+
+# Copy model training scripts
+COPY ml/ ./ml/
+COPY data/ ./data/
+
+# Create model storage directory
+RUN mkdir -p storage/models/checkpoints
+
+# Environment for training
+ENV CUDA_VISIBLE_DEVICES="" \
+    OMP_NUM_THREADS=4
+
+# Training command
+CMD ["python", "ml/train_model.py"]
+
+# Production with GPU support
+FROM nvidia/cuda:11.8-runtime-ubuntu22.04 AS production-gpu
+
+# Install Python and dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    libpq5 \
+    libffi8 \
+    libblas3 \
+    liblapack3 \
+    libsndfile1 \
+    ffmpeg \
+    curl \
+    dumb-init && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create symlinks for python
+RUN ln -s /usr/bin/python3.11 /usr/bin/python && \
+    ln -s /usr/bin/pip3 /usr/bin/pip
+
+# Create non-root user
+RUN groupadd -r appuser && useradd --no-log-init -r -g appuser appuser
+
+WORKDIR /app
+
+# Copy virtual environment from builder
+COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
+
+# Copy application code
+COPY --from=builder --chown=appuser:appuser /app/app ./app/
+COPY --from=builder --chown=appuser:appuser /app/scripts ./scripts/
+COPY --from=builder --chown=appuser:appuser /app/config ./config/
+COPY --from=builder --chown=appuser:appuser /app/ml ./ml/
+
+# Copy runtime scripts
+COPY --chown=appuser:appuser scripts/start.sh ./start.sh
+RUN chmod +x start.sh
+
+# Create directories
+RUN mkdir -p logs storage/models storage/temp && \
+    chown -R appuser:appuser /app
+
+USER appuser
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH="/app" \
+    PYTHONUNBUFFERED=1 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["./start.sh"]
+
+# Profiling stage
+FROM production AS profiling
+
+USER root
+
+# Install profiling tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    strace \
+    ltrace \
+    gdb \
+    valgrind && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Python profiling tools
+RUN /opt/venv/bin/pip install \
+    py-spy \
+    memory-profiler \
+    line-profiler \
+    cProfile \
+    pstats
+
+USER appuser
+
+# Enable profiling
+ENV PYTHONPROFILE=1
+
+# Expose profiling port
+EXPOSE 8000 8001
+
+CMD ["python", "-m", "cProfile", "-o", "profile.stats", "app/main.py"]

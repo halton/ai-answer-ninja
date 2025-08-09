@@ -1,0 +1,57 @@
+# Production Namespace Configuration
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-ninja
+  labels:
+    name: ai-ninja
+    environment: production
+    app.kubernetes.io/name: ai-ninja
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/component: namespace
+    app.kubernetes.io/part-of: ai-phone-system
+---
+# Resource Quota for Production
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ai-ninja-quota
+  namespace: ai-ninja
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    persistentvolumeclaims: "10"
+    services: "20"
+    secrets: "20"
+    configmaps: "20"
+    pods: "50"
+---
+# Limit Range for Production
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ai-ninja-limits
+  namespace: ai-ninja
+spec:
+  limits:
+  - default:
+      cpu: "1"
+      memory: "1Gi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+    max:
+      cpu: "4"
+      memory: "8Gi"
+    min:
+      cpu: "50m"
+      memory: "64Mi"
+    type: Container
+  - max:
+      storage: "100Gi"
+    min:
+      storage: "1Gi"
+    type: PersistentVolumeClaim

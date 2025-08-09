@@ -1,0 +1,423 @@
+# Production Persistent Storage Configuration
+# High-performance storage for ML models, analytics data, and temporary files
+
+---
+# Storage Classes for different performance tiers
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+  fsType: ext4
+  encrypted: "true"
+provisioner: ebs.csi.aws.com
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard-ssd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+parameters:
+  type: gp3
+  iops: "1000"
+  throughput: "125"
+  fsType: ext4
+  encrypted: "true"
+provisioner: ebs.csi.aws.com
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: bulk-storage
+parameters:
+  type: sc1
+  fsType: ext4
+  encrypted: "true"
+provisioner: ebs.csi.aws.com
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+
+---
+# ML Models Persistent Volume Claim
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ml-models-pvc
+  namespace: ai-ninja
+  labels:
+    app: ml-models
+    tier: data
+    component: storage
+  annotations:
+    volume.beta.kubernetes.io/storage-class: fast-ssd
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 50Gi
+  selector:
+    matchLabels:
+      type: ml-models
+
+---
+# Analytics Storage PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: analytics-storage-pvc
+  namespace: ai-ninja
+  labels:
+    app: profile-analytics
+    tier: data
+    component: storage
+  annotations:
+    volume.beta.kubernetes.io/storage-class: standard-ssd
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-ssd
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# Shared Logs Storage PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-logs-pvc
+  namespace: ai-ninja
+  labels:
+    app: shared-logs
+    tier: data
+    component: logging
+  annotations:
+    volume.beta.kubernetes.io/storage-class: standard-ssd
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: standard-ssd
+  resources:
+    requests:
+      storage: 200Gi
+
+---
+# Backup Storage PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-storage-pvc
+  namespace: ai-ninja
+  labels:
+    app: backup-storage
+    tier: data
+    component: backup
+  annotations:
+    volume.beta.kubernetes.io/storage-class: bulk-storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: bulk-storage
+  resources:
+    requests:
+      storage: 500Gi
+
+---
+# Database Backup Storage PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-backup-pvc
+  namespace: ai-ninja
+  labels:
+    app: database-backup
+    tier: data
+    component: backup
+  annotations:
+    volume.beta.kubernetes.io/storage-class: standard-ssd
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-ssd
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# Persistent Volume for ML Models (if not using dynamic provisioning)
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ml-models-pv
+  labels:
+    type: ml-models
+    tier: data
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: fast-ssd
+  mountOptions:
+    - hard
+    - nfsvers=4.1
+  nfs:
+    path: /ml-models
+    server: nfs-server.ai-ninja.internal
+
+---
+# ConfigMap for ML Models Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ml-models-config
+  namespace: ai-ninja
+  labels:
+    app: ml-models
+    tier: configuration
+data:
+  models.yaml: |
+    models:
+      spam_classifier:
+        path: "/app/models/spam_classifier.joblib"
+        version: "1.0.2"
+        type: "sklearn"
+        feature_extractor: "tfidf_vectorizer"
+        performance:
+          accuracy: 0.94
+          precision: 0.92
+          recall: 0.89
+      
+      intent_recognition:
+        path: "/app/models/intent_classifier.onnx"
+        version: "2.1.0"
+        type: "onnx"
+        input_shape: [1, 512]
+        performance:
+          accuracy: 0.96
+          latency_p95: 45  # milliseconds
+      
+      sentiment_analysis:
+        path: "/app/models/sentiment_model.pt"
+        version: "1.5.1"
+        type: "pytorch"
+        classes: ["negative", "neutral", "positive"]
+        performance:
+          f1_score: 0.91
+          inference_time: 32  # milliseconds
+      
+      user_profiler:
+        path: "/app/models/user_profiler.pkl"
+        version: "1.2.3"
+        type: "sklearn"
+        features: 127
+        performance:
+          clustering_score: 0.78
+          profile_accuracy: 0.85
+
+  model_config.json: |
+    {
+      "model_server": {
+        "host": "0.0.0.0",
+        "port": 8501,
+        "model_base_path": "/app/models",
+        "monitoring_config": {
+          "enable_profiling": true,
+          "enable_batching": true,
+          "max_batch_size": 32,
+          "batch_timeout_micros": 100000
+        }
+      },
+      "performance_thresholds": {
+        "max_inference_time_ms": 500,
+        "max_memory_usage_mb": 2048,
+        "min_accuracy": 0.85
+      },
+      "auto_scaling": {
+        "enabled": true,
+        "min_replicas": 1,
+        "max_replicas": 10,
+        "target_cpu_utilization": 70,
+        "target_memory_utilization": 80
+      }
+    }
+
+---
+# Volume Snapshot Class for Backups
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: ai-ninja-snapshot-class
+  annotations:
+    snapshot.storage.kubernetes.io/is-default-class: "true"
+driver: ebs.csi.aws.com
+deletionPolicy: Retain
+parameters:
+  tagSpecification_1: "Name=ai-ninja-snapshot"
+  tagSpecification_2: "Environment=production"
+
+---
+# Volume Snapshot for ML Models Backup
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: ml-models-snapshot
+  namespace: ai-ninja
+  labels:
+    backup-type: scheduled
+    component: ml-models
+spec:
+  volumeSnapshotClassName: ai-ninja-snapshot-class
+  source:
+    persistentVolumeClaimName: ml-models-pvc
+
+---
+# CronJob for Automated Storage Backups
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: storage-backup-job
+  namespace: ai-ninja
+  labels:
+    app: backup-job
+    tier: maintenance
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  timeZone: "UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600  # 1 hour timeout
+      template:
+        metadata:
+          labels:
+            app: backup-job
+        spec:
+          serviceAccountName: backup-service-account
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            fsGroup: 1001
+          restartPolicy: OnFailure
+          containers:
+          - name: backup-storage
+            image: ghcr.io/ai-ninja/backup-utility:latest
+            imagePullPolicy: Always
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            env:
+            - name: BACKUP_TYPE
+              value: "storage"
+            - name: S3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: backup-secrets
+                  key: s3-bucket
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: backup-secrets
+                  key: aws-access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backup-secrets
+                  key: aws-secret-access-key
+            - name: BACKUP_RETENTION_DAYS
+              value: "30"
+            volumeMounts:
+            - name: ml-models
+              mountPath: /backup/ml-models
+              readOnly: true
+            - name: analytics-storage
+              mountPath: /backup/analytics
+              readOnly: true
+            - name: backup-temp
+              mountPath: /tmp
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "250m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+          volumes:
+          - name: ml-models
+            persistentVolumeClaim:
+              claimName: ml-models-pvc
+          - name: analytics-storage
+            persistentVolumeClaim:
+              claimName: analytics-storage-pvc
+          - name: backup-temp
+            emptyDir:
+              sizeLimit: 5Gi
+
+---
+# Storage Monitoring and Alerting
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: storage-monitoring-config
+  namespace: ai-ninja
+  labels:
+    app: storage-monitoring
+    tier: monitoring
+data:
+  storage-alerts.yaml: |
+    groups:
+    - name: storage.rules
+      rules:
+      - alert: PersistentVolumeUsageHigh
+        expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "Persistent Volume usage is above 85%"
+          description: "PV {{ $labels.persistentvolumeclaim }} in namespace {{ $labels.namespace }} is {{ $value | humanizePercentage }} full"
+      
+      - alert: PersistentVolumeUsageCritical
+        expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 95
+        for: 2m
+        labels:
+          severity: critical
+          component: storage
+        annotations:
+          summary: "Persistent Volume usage is critically high"
+          description: "PV {{ $labels.persistentvolumeclaim }} in namespace {{ $labels.namespace }} is {{ $value | humanizePercentage }} full"
+      
+      - alert: PersistentVolumeInodeUsageHigh
+        expr: (kubelet_volume_stats_inodes_used / kubelet_volume_stats_inodes) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "Persistent Volume inode usage is above 85%"
+          description: "PV {{ $labels.persistentvolumeclaim }} in namespace {{ $labels.namespace }} inode usage is {{ $value | humanizePercentage }}"

@@ -1,0 +1,128 @@
+# Staging Environment ConfigMaps
+# Configuration for staging environment testing
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-ninja-staging-config
+  namespace: ai-ninja-staging
+  labels:
+    app: ai-ninja
+    environment: staging
+    tier: configuration
+data:
+  # Environment settings
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  ENVIRONMENT: "staging"
+  
+  # Database configuration (non-sensitive)
+  DB_HOST: "postgresql-staging.internal"
+  DB_PORT: "5432"
+  DB_NAME: "ai_ninja_staging"
+  DB_MAX_CONNECTIONS: "15"
+  DB_CONNECTION_TIMEOUT: "5000"
+  DB_SSL: "true"
+  
+  # Redis configuration (non-sensitive)
+  REDIS_HOST: "redis-staging.internal"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_CLUSTER_MODE: "false"
+  
+  # Azure Services (Staging)
+  AZURE_SPEECH_REGION: "eastus2"
+  AZURE_OPENAI_ENDPOINT: "https://ai-ninja-staging-openai.openai.azure.com"
+  AZURE_SPEECH_ENDPOINT: "https://ai-ninja-staging-speech.cognitiveservices.azure.com"
+  
+  # Feature flags (production-like)
+  FEATURE_EMAIL_VERIFICATION_REQUIRED: "true"
+  FEATURE_MFA_REQUIRED: "false"
+  FEATURE_RATE_LIMITING_ENABLED: "true"
+  FEATURE_AUDIT_LOGGING_ENABLED: "true"
+  FEATURE_SECURITY_HEADERS_ENABLED: "true"
+  FEATURE_MOCK_AZURE_SERVICES: "false"
+  
+  # Performance settings (production-like)
+  MAX_CONCURRENT_CALLS: "500"
+  WEBSOCKET_TIMEOUT: "300000"
+  HTTP_TIMEOUT: "30000"
+  AUDIO_PROCESSING_TIMEOUT: "5000"
+  PROCESSING_PIPELINE_TIMEOUT: "1500"
+  
+  # Scaling configuration
+  MIN_REPLICAS: "2"
+  MAX_REPLICAS: "10"
+  TARGET_CPU_UTILIZATION: "70"
+  TARGET_MEMORY_UTILIZATION: "80"
+  
+  # CORS (restricted)
+  CORS_ORIGINS: "https://staging.ai-ninja.com,https://admin-staging.ai-ninja.com"
+  CORS_CREDENTIALS: "true"
+  
+  # Rate limiting
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_WINDOW: "900"
+  RATE_LIMIT_MAX_REQUESTS: "1000"
+  RATE_LIMIT_REDIS_KEY_PREFIX: "staging:rate_limit"
+  
+  # SSL/TLS
+  SSL_ENABLED: "true"
+  CERT_MANAGER_ISSUER: "letsencrypt-staging"
+  FORCE_HTTPS: "true"
+  
+  # Monitoring (Full)
+  METRICS_ENABLED: "true"
+  HEALTH_CHECK_INTERVAL: "10"
+  PROMETHEUS_METRICS_PORT: "9090"
+  JAEGER_ENABLED: "true"
+  GRAFANA_ENABLED: "true"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-ninja-staging-service-config
+  namespace: ai-ninja-staging
+  labels:
+    app: ai-ninja
+    environment: staging
+    tier: configuration
+data:
+  # Docker Registry
+  DOCKER_REGISTRY: "ghcr.io/ai-ninja"
+  REGISTRY_URL: "ghcr.io"
+  PUSH_IMAGES: "true"
+  
+  # Audio processing settings
+  AUDIO_SAMPLE_RATE: "16000"
+  AUDIO_CHANNELS: "1"
+  AUDIO_BUFFER_SIZE: "4096"
+  AUDIO_FORMAT: "wav"
+  
+  # WebSocket configuration
+  WS_MAX_CONNECTIONS_PER_POD: "100"
+  WS_HEARTBEAT_INTERVAL: "30000"
+  WS_CONNECTION_TIMEOUT: "60000"
+  
+  # Storage configuration
+  STORAGE_CLASS: "standard-ssd"
+  BACKUP_ENABLED: "true"
+  BACKUP_RETENTION_DAYS: "7"
+  BACKUP_SCHEDULE: "0 2 * * *"
+  
+  # Cache configuration
+  CACHE_TTL_DEFAULT: "3600"
+  CACHE_TTL_USER_PROFILE: "1800"
+  CACHE_TTL_WHITELIST: "600"
+  CACHE_WARMING_ENABLED: "true"
+  
+  # External services
+  EXTERNAL_API_TIMEOUT: "10000"
+  RETRY_ATTEMPTS: "3"
+  RETRY_BACKOFF: "exponential"
+  
+  # Testing
+  INTEGRATION_TESTS_ENABLED: "true"
+  LOAD_TESTING_ENABLED: "true"
+  PERFORMANCE_BENCHMARKING_ENABLED: "true"

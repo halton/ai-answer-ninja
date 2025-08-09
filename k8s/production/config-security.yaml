@@ -1,0 +1,653 @@
+# Production Configuration Management and Security Policies
+# ConfigMaps, Secrets, RBAC, Network Policies, Pod Security Standards
+
+---
+# Global Configuration ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-ninja-config
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: configuration
+data:
+  # Environment configuration
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  
+  # Database configuration (non-sensitive)
+  DB_HOST: "postgresql.ai-ninja.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "ai_ninja_prod"
+  DB_MAX_CONNECTIONS: "20"
+  DB_CONNECTION_TIMEOUT: "5000"
+  
+  # Redis configuration (non-sensitive)
+  REDIS_HOST: "redis.ai-ninja.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  
+  # Azure Services configuration (non-sensitive endpoints)
+  AZURE_SPEECH_REGION: "eastus2"
+  AZURE_OPENAI_ENDPOINT: "https://ai-ninja-openai.openai.azure.com"
+  
+  # Feature flags
+  FEATURE_EMAIL_VERIFICATION_REQUIRED: "true"
+  FEATURE_MFA_REQUIRED: "false"
+  FEATURE_RATE_LIMITING_ENABLED: "true"
+  FEATURE_AUDIT_LOGGING_ENABLED: "true"
+  FEATURE_SECURITY_HEADERS_ENABLED: "true"
+  
+  # Performance tuning
+  MAX_CONCURRENT_CALLS: "1000"
+  WEBSOCKET_TIMEOUT: "300000"
+  HTTP_TIMEOUT: "30000"
+  AUDIO_PROCESSING_TIMEOUT: "5000"
+  
+  # Security settings
+  CORS_ORIGINS: "https://app.ai-ninja.com,https://admin.ai-ninja.com"
+  SESSION_TIMEOUT: "1800"
+  TOKEN_EXPIRY: "3600"
+  REFRESH_TOKEN_EXPIRY: "604800"
+  
+  # Rate limiting
+  RATE_LIMIT_WINDOW: "900"
+  RATE_LIMIT_MAX_REQUESTS: "100"
+  RATE_LIMIT_MAX_WEBSOCKET_CONNECTIONS: "10"
+
+---
+# Service-specific ConfigMaps
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: realtime-processor-config
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: configuration
+data:
+  # Audio processing settings
+  AUDIO_SAMPLE_RATE: "16000"
+  AUDIO_CHANNELS: "1"
+  AUDIO_BUFFER_SIZE: "4096"
+  AUDIO_FORMAT: "wav"
+  
+  # WebSocket configuration
+  WS_MAX_CONNECTIONS_PER_POD: "100"
+  WS_HEARTBEAT_INTERVAL: "30000"
+  WS_CONNECTION_TIMEOUT: "60000"
+  
+  # Processing pipeline
+  PROCESSING_PIPELINE_TIMEOUT: "1500"
+  STT_TIMEOUT: "300"
+  AI_GENERATION_TIMEOUT: "400"
+  TTS_TIMEOUT: "250"
+  
+  # Performance metrics
+  METRICS_COLLECTION_INTERVAL: "5000"
+  PERFORMANCE_LOGGING_ENABLED: "true"
+
+---
+# Secrets for sensitive configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ai-ninja-secrets
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: configuration
+type: Opaque
+data:
+  # Database credentials (base64 encoded)
+  DB_USERNAME: YWlfbmluamE=  # ai_ninja
+  DB_PASSWORD: c2VjdXJlX2RiX3Bhc3N3b3JkXzIwMjQ=  # secure_db_password_2024
+  
+  # JWT secrets
+  JWT_ACCESS_SECRET: YWNjZXNzX3Rva2VuX3NlY3JldF9rZXlfMjAyNA==  # access_token_secret_key_2024
+  JWT_REFRESH_SECRET: cmVmcmVzaF90b2tlbl9zZWNyZXRfa2V5XzIwMjQ=  # refresh_token_secret_key_2024
+  
+  # Azure API keys
+  AZURE_SPEECH_KEY: eW91cl9henVyZV9zcGVlY2hfYXBpX2tleQ==  # your_azure_speech_api_key
+  AZURE_OPENAI_KEY: eW91cl9henVyZV9vcGVuYWlfa2V5  # your_azure_openai_key
+  
+  # Redis password
+  REDIS_PASSWORD: cmVkaXNfcGFzc3dvcmRfMjAyNA==  # redis_password_2024
+  
+  # Session secrets
+  SESSION_SECRET: c2Vzc2lvbl9zZWNyZXRfa2V5XzIwMjQ=  # session_secret_key_2024
+  
+  # Encryption keys
+  ENCRYPTION_KEY: ZW5jcnlwdGlvbl9rZXlfMzJfYnl0ZXNfbG9uZ19zdHJpbmc=  # encryption_key_32_bytes_long_string
+
+---
+# TLS Certificates Secret (for internal service communication)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: internal-tls
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: security
+type: kubernetes.io/tls
+data:
+  # Self-signed certificate for internal communication (replace with proper certs)
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t...  # Base64 encoded certificate
+  tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t...  # Base64 encoded private key
+
+---
+# Service Account for Core Services
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-ninja-core
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: security
+automountServiceAccountToken: true
+
+---
+# Role for Core Services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ai-ninja-core
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: security
+rules:
+# Read access to ConfigMaps and Secrets
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+# Read access to Services for service discovery
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+# Read access to Pods for health checks
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+# Create and update Events for logging
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+
+---
+# RoleBinding for Core Services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ai-ninja-core
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: security
+subjects:
+- kind: ServiceAccount
+  name: ai-ninja-core
+  namespace: ai-ninja
+roleRef:
+  kind: Role
+  name: ai-ninja-core
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Network Policy - Default Deny All
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: ai-ninja
+  labels:
+    app: security
+    tier: networking
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# Network Policy - Core Services Communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: core-services-communication
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: networking
+spec:
+  podSelector:
+    matchLabels:
+      tier: core
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    - podSelector:
+        matchLabels:
+          app: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3001
+    - protocol: TCP
+      port: 3002
+    - protocol: TCP
+      port: 3003
+    - protocol: TCP
+      port: 3004
+    - protocol: TCP
+      port: 3005
+    - protocol: TCP
+      port: 3006
+  # Allow inter-service communication
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: core
+    ports:
+    - protocol: TCP
+      port: 3001
+    - protocol: TCP
+      port: 3002
+    - protocol: TCP
+      port: 3003
+    - protocol: TCP
+      port: 3004
+    - protocol: TCP
+      port: 3005
+    - protocol: TCP
+      port: 3006
+  # Allow monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ai-ninja-monitoring
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 9090  # Metrics port
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow database access
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow Redis access
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow inter-service communication
+  - to:
+    - podSelector:
+        matchLabels:
+          tier: core
+    ports:
+    - protocol: TCP
+      port: 3001
+    - protocol: TCP
+      port: 3002
+    - protocol: TCP
+      port: 3003
+    - protocol: TCP
+      port: 3004
+    - protocol: TCP
+      port: 3005
+    - protocol: TCP
+      port: 3006
+  # Allow HTTPS outbound (for Azure API calls)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Network Policy - Database Access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-access
+  namespace: ai-ninja
+  labels:
+    app: postgresql
+    tier: networking
+spec:
+  podSelector:
+    matchLabels:
+      app: postgresql
+  policyTypes:
+  - Ingress
+  ingress:
+  # Only allow core services to access database
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: core
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ai-ninja-monitoring
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 9187  # PostgreSQL exporter port
+
+---
+# Network Policy - Redis Access  
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-access
+  namespace: ai-ninja
+  labels:
+    app: redis
+    tier: networking
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+  - Ingress
+  ingress:
+  # Only allow core services to access Redis
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: core
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ai-ninja-monitoring
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 9121  # Redis exporter port
+
+---
+# Pod Security Policy (for clusters that support it)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: ai-ninja-restricted
+  labels:
+    app: ai-ninja
+    tier: security
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'RunAsAny'
+  readOnlyRootFilesystem: true
+
+---
+# Security Context Constraints (for OpenShift)
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: ai-ninja-scc
+  labels:
+    app: ai-ninja
+    tier: security
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegedContainer: false
+allowedCapabilities: []
+defaultAddCapabilities: []
+requiredDropCapabilities:
+- ALL
+fsGroup:
+  type: MustRunAs
+  ranges:
+  - min: 1000
+  - max: 65535
+readOnlyRootFilesystem: true
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+users:
+- system:serviceaccount:ai-ninja:ai-ninja-core
+
+---
+# Resource Quotas for the namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ai-ninja-quota
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: resource-management
+spec:
+  hard:
+    # Compute quotas
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "50"
+    limits.memory: 100Gi
+    
+    # Storage quotas
+    requests.storage: 1Ti
+    persistentvolumeclaims: "20"
+    
+    # Object quotas
+    pods: "100"
+    services: "20"
+    secrets: "50"
+    configmaps: "50"
+    replicationcontrollers: "0"
+    deployments.apps: "20"
+    replicasets.apps: "20"
+
+---
+# Limit Ranges for resource constraints
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ai-ninja-limits
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: resource-management
+spec:
+  limits:
+  # Pod limits
+  - type: Pod
+    max:
+      cpu: "4"
+      memory: 8Gi
+    min:
+      cpu: 100m
+      memory: 128Mi
+  # Container limits
+  - type: Container
+    default:
+      cpu: 500m
+      memory: 1Gi
+    defaultRequest:
+      cpu: 100m
+      memory: 256Mi
+    max:
+      cpu: "2"
+      memory: 4Gi
+    min:
+      cpu: 50m
+      memory: 64Mi
+  # PVC limits
+  - type: PersistentVolumeClaim
+    max:
+      storage: 100Gi
+    min:
+      storage: 1Gi
+
+---
+# External Secrets Operator (if using external secret management)
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: azure-keyvault
+  namespace: ai-ninja
+  labels:
+    app: external-secrets
+    tier: security
+spec:
+  provider:
+    azurekv:
+      vaultUrl: "https://ai-ninja-keyvault.vault.azure.net/"
+      authSecretRef:
+        clientId:
+          name: azure-secret-creds
+          key: ClientID
+        clientSecret:
+          name: azure-secret-creds
+          key: ClientSecret
+      tenantId: "your-tenant-id"
+
+---
+# External Secret for Azure KeyVault integration
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: ai-ninja-external-secrets
+  namespace: ai-ninja
+  labels:
+    app: external-secrets
+    tier: security
+spec:
+  refreshInterval: 300s  # Refresh every 5 minutes
+  secretStoreRef:
+    name: azure-keyvault
+    kind: SecretStore
+  target:
+    name: ai-ninja-secrets-external
+    creationPolicy: Owner
+    template:
+      type: Opaque
+      data:
+        AZURE_SPEECH_KEY: "{{ .azureSpeechKey | toString }}"
+        AZURE_OPENAI_KEY: "{{ .azureOpenAIKey | toString }}"
+        DB_PASSWORD: "{{ .databasePassword | toString }}"
+        JWT_ACCESS_SECRET: "{{ .jwtAccessSecret | toString }}"
+  data:
+  - secretKey: azureSpeechKey
+    remoteRef:
+      key: azure-speech-api-key
+  - secretKey: azureOpenAIKey
+    remoteRef:
+      key: azure-openai-api-key
+  - secretKey: databasePassword
+    remoteRef:
+      key: database-password
+  - secretKey: jwtAccessSecret
+    remoteRef:
+      key: jwt-access-secret
+
+---
+# Admission Controller Policy (OPA Gatekeeper)
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: requiresecuritycontext
+  labels:
+    app: gatekeeper
+    tier: security
+spec:
+  crd:
+    spec:
+      names:
+        kind: RequireSecurityContext
+      validation:
+        type: object
+        properties:
+          runAsNonRoot:
+            type: boolean
+          readOnlyRootFilesystem:
+            type: boolean
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package requiresecuritycontext
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsNonRoot
+          msg := "Container must run as non-root user"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.readOnlyRootFilesystem
+          msg := "Container must have read-only root filesystem"
+        }
+
+---
+# Gatekeeper Constraint
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: RequireSecurityContext
+metadata:
+  name: require-security-context
+  labels:
+    app: gatekeeper
+    tier: security
+spec:
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment"]
+    namespaces: ["ai-ninja"]
+  parameters:
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true

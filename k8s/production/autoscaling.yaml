@@ -1,0 +1,604 @@
+# Production Auto-scaling Configuration
+# Horizontal and Vertical Pod Autoscalers for optimal resource utilization
+
+---
+# Horizontal Pod Autoscaler for User Management Service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: user-management-hpa
+  namespace: ai-ninja
+  labels:
+    app: user-management
+    tier: core
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: user-management
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "100"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 1
+        periodSeconds: 300
+      selectPolicy: Min
+
+---
+# HPA for Smart Whitelist Service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: smart-whitelist-hpa
+  namespace: ai-ninja
+  labels:
+    app: smart-whitelist
+    tier: core
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: smart-whitelist
+  minReplicas: 3
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 75
+  - type: Pods
+    pods:
+      metric:
+        name: ml_inference_queue_length
+      target:
+        type: AverageValue
+        averageValue: "10"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+
+---
+# HPA for Realtime Processor Service (Critical)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: realtime-processor-hpa
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+    component: autoscaling
+    priority: critical
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: realtime-processor
+  minReplicas: 5
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60  # Lower threshold for critical service
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Pods
+    pods:
+      metric:
+        name: active_websocket_connections
+      target:
+        type: AverageValue
+        averageValue: "50"
+  - type: Pods
+    pods:
+      metric:
+        name: audio_processing_queue_length
+      target:
+        type: AverageValue
+        averageValue: "5"
+  - type: Pods
+    pods:
+      metric:
+        name: response_latency_p95
+      target:
+        type: AverageValue
+        averageValue: "800"  # 800ms P95 latency threshold
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30  # Faster scaling for critical service
+      policies:
+      - type: Percent
+        value: 200
+        periodSeconds: 15
+      - type: Pods
+        value: 3
+        periodSeconds: 30
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 600  # Conservative scale-down
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 180
+      - type: Pods
+        value: 1
+        periodSeconds: 300
+      selectPolicy: Min
+
+---
+# HPA for Conversation Engine Service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: conversation-engine-hpa
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: conversation-engine
+  minReplicas: 4
+  maxReplicas: 15
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 65
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 75
+  - type: Pods
+    pods:
+      metric:
+        name: ai_model_inference_time
+      target:
+        type: AverageValue
+        averageValue: "500"  # 500ms average inference time
+  - type: Pods
+    pods:
+      metric:
+        name: conversation_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "20"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 45
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 30
+        periodSeconds: 60
+
+---
+# HPA for Profile Analytics Service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: profile-analytics-hpa
+  namespace: ai-ninja
+  labels:
+    app: profile-analytics
+    tier: core
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: profile-analytics
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: ml_training_queue_length
+      target:
+        type: AverageValue
+        averageValue: "5"
+  - type: Pods
+    pods:
+      metric:
+        name: analytics_processing_time
+      target:
+        type: AverageValue
+        averageValue: "1000"  # 1 second processing time
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 90  # Slower scaling for analytics
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 30
+      - type: Pods
+        value: 1
+        periodSeconds: 90
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 120
+
+---
+# HPA for Conversation Analyzer Service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: conversation-analyzer-hpa
+  namespace: ai-ninja
+  labels:
+    app: conversation-analyzer
+    tier: core
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: conversation-analyzer
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 75
+  - type: Pods
+    pods:
+      metric:
+        name: analysis_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "15"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+
+---
+# Vertical Pod Autoscaler for ML-heavy services
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: conversation-engine-vpa
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+    component: vpa
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: conversation-engine
+  updatePolicy:
+    updateMode: "Auto"
+    minReplicas: 2  # Ensure minimum availability during VPA updates
+  resourcePolicy:
+    containerPolicies:
+    - containerName: conversation-engine
+      minAllowed:
+        cpu: 500m
+        memory: 1Gi
+      maxAllowed:
+        cpu: 4
+        memory: 8Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+
+---
+# VPA for Profile Analytics Service
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: profile-analytics-vpa
+  namespace: ai-ninja
+  labels:
+    app: profile-analytics
+    tier: core
+    component: vpa
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: profile-analytics
+  updatePolicy:
+    updateMode: "Auto"
+    minReplicas: 2
+  resourcePolicy:
+    containerPolicies:
+    - containerName: profile-analytics
+      minAllowed:
+        cpu: 500m
+        memory: 1Gi
+      maxAllowed:
+        cpu: 4
+        memory: 8Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+
+---
+# Pod Disruption Budget for User Management
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: user-management-pdb
+  namespace: ai-ninja
+  labels:
+    app: user-management
+    tier: core
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: user-management
+      version: v1
+
+---
+# PDB for Smart Whitelist Service
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: smart-whitelist-pdb
+  namespace: ai-ninja
+  labels:
+    app: smart-whitelist
+    tier: core
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: smart-whitelist
+      version: v1
+
+---
+# PDB for Realtime Processor (Critical)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: realtime-processor-pdb
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+    priority: critical
+spec:
+  minAvailable: 4  # Higher minimum for critical service
+  selector:
+    matchLabels:
+      app: realtime-processor
+      version: v1
+
+---
+# PDB for Conversation Engine
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: conversation-engine-pdb
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: conversation-engine
+      version: v1
+
+---
+# PDB for Profile Analytics
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: profile-analytics-pdb
+  namespace: ai-ninja
+  labels:
+    app: profile-analytics
+    tier: core
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: profile-analytics
+      version: v1
+
+---
+# PDB for Conversation Analyzer
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: conversation-analyzer-pdb
+  namespace: ai-ninja
+  labels:
+    app: conversation-analyzer
+    tier: core
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: conversation-analyzer
+      version: v1
+
+---
+# Custom Resource for Advanced Auto-scaling
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autoscaling-config
+  namespace: ai-ninja
+  labels:
+    app: autoscaling
+    tier: configuration
+data:
+  scaling-policies.yaml: |
+    scaling_policies:
+      global:
+        scale_up_cooldown: 60
+        scale_down_cooldown: 300
+        max_scale_up_rate: 100%
+        max_scale_down_rate: 50%
+      
+      services:
+        realtime-processor:
+          priority: critical
+          aggressive_scaling: true
+          metrics_weight:
+            cpu: 0.3
+            memory: 0.2
+            custom_latency: 0.5
+          thresholds:
+            latency_p95_ms: 800
+            active_connections: 50
+            error_rate: 0.01
+        
+        conversation-engine:
+          priority: high
+          ml_aware_scaling: true
+          gpu_scaling: false
+          thresholds:
+            inference_time_ms: 500
+            queue_depth: 10
+            model_accuracy: 0.85
+        
+        profile-analytics:
+          priority: medium
+          batch_aware_scaling: true
+          thresholds:
+            processing_time_ms: 1000
+            queue_length: 5
+            training_active: false
+
+  metrics-config.yaml: |
+    custom_metrics:
+      - name: requests_per_second
+        query: 'rate(http_requests_total[1m])'
+        type: prometheus
+        
+      - name: active_websocket_connections
+        query: 'websocket_connections_active'
+        type: prometheus
+        
+      - name: audio_processing_queue_length
+        query: 'audio_processing_queue_depth'
+        type: prometheus
+        
+      - name: ml_inference_queue_length
+        query: 'ml_inference_requests_pending'
+        type: prometheus
+        
+      - name: response_latency_p95
+        query: 'histogram_quantile(0.95, http_request_duration_seconds_bucket)'
+        type: prometheus

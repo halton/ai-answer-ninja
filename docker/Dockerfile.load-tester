@@ -1,0 +1,51 @@
+# Load Tester Dockerfile
+# Specialized container for performance and load testing
+
+FROM node:18-alpine AS base
+
+# Install system dependencies
+RUN apk update && apk add --no-cache \
+    curl \
+    bash \
+    git \
+    htop \
+    ca-certificates \
+    dumb-init && \
+    rm -rf /var/cache/apk/*
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+COPY tests/load/package*.json ./tests/load/
+
+# Install dependencies
+RUN npm install && \
+    cd tests/load && npm install
+
+# Copy load test files
+COPY tests/load/ ./tests/load/
+COPY shared/ ./shared/
+COPY scripts/load-test-runner.sh ./load-test-runner.sh
+
+# Make script executable
+RUN chmod +x load-test-runner.sh
+
+# Create load tester user
+RUN addgroup -g 1001 -S loadtester && \
+    adduser -S loadtester -u 1001 -G loadtester
+
+# Create reports directory
+RUN mkdir -p reports && \
+    chown -R loadtester:loadtester /app
+
+USER loadtester
+
+# Environment variables for load testing
+ENV NODE_ENV=test \
+    LOAD_TEST_ENVIRONMENT=test \
+    FORCE_COLOR=1
+
+# Default command
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["./load-test-runner.sh"]

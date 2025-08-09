@@ -1,0 +1,50 @@
+# Test Runner Dockerfile
+# Specialized container for running all types of tests
+
+FROM node:18-alpine AS base
+
+# Install system dependencies for testing
+RUN apk update && apk add --no-cache \
+    curl \
+    bash \
+    git \
+    postgresql-client \
+    ca-certificates \
+    dumb-init && \
+    rm -rf /var/cache/apk/*
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+COPY tests/package*.json ./tests/
+
+# Install dependencies
+RUN npm install && \
+    cd tests && npm install
+
+# Copy test files and configurations
+COPY tests/ ./tests/
+COPY shared/ ./shared/
+COPY scripts/test-runner.sh ./test-runner.sh
+
+# Make scripts executable
+RUN chmod +x test-runner.sh
+
+# Create test user
+RUN addgroup -g 1001 -S tester && \
+    adduser -S tester -u 1001 -G tester
+
+# Change ownership
+RUN chown -R tester:tester /app
+
+USER tester
+
+# Environment variables
+ENV NODE_ENV=test \
+    CI=true \
+    FORCE_COLOR=1
+
+# Default command
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["./test-runner.sh"]

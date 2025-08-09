@@ -1,0 +1,1002 @@
+# Production Core Services Deployments
+# Optimized for high availability, performance, and security
+
+---
+# User Management Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-management
+  namespace: ai-ninja
+  labels:
+    app: user-management
+    tier: core
+    component: user-service
+    version: v1
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    kubernetes.io/change-cause: "Initial production deployment"
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: user-management
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: user-management
+        tier: core
+        component: user-service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3005"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ai-ninja-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      imagePullSecrets:
+      - name: registry-credentials
+      containers:
+      - name: user-management
+        image: IMAGE_TAG  # This will be replaced during deployment
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3005"
+        - name: HOST
+          value: "0.0.0.0"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: redis-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: jwt-secret
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: encryption-key
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: log-level
+        - name: METRICS_ENABLED
+          value: "true"
+        - name: HEALTH_CHECK_INTERVAL
+          value: "30000"
+        ports:
+        - name: http
+          containerPort: 3005
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1"
+        volumeMounts:
+        - name: app-logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 500Mi
+      nodeSelector:
+        kubernetes.io/arch: amd64
+        node-type: application
+      tolerations:
+      - key: "node-type"
+        operator: "Equal"
+        value: "application"
+        effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - user-management
+              topologyKey: kubernetes.io/hostname
+
+---
+# Smart Whitelist Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smart-whitelist
+  namespace: ai-ninja
+  labels:
+    app: smart-whitelist
+    tier: core
+    component: whitelist-service
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: smart-whitelist
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: smart-whitelist
+        tier: core
+        component: whitelist-service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3006"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ai-ninja-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      imagePullSecrets:
+      - name: registry-credentials
+      containers:
+      - name: smart-whitelist
+        image: IMAGE_TAG  # This will be replaced during deployment
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+        env:
+        - name: GIN_MODE
+          value: "release"
+        - name: PORT
+          value: "3006"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: redis-url
+        - name: USER_MANAGEMENT_URL
+          value: "http://user-management-service:3005"
+        - name: ML_MODEL_PATH
+          value: "/app/models"
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: log-level
+        - name: METRICS_ENABLED
+          value: "true"
+        ports:
+        - name: http
+          containerPort: 3006
+          protocol: TCP
+        - name: metrics
+          containerPort: 9091
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1"
+        volumeMounts:
+        - name: ml-models
+          mountPath: /app/models
+          readOnly: true
+        - name: app-logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: ml-models
+        configMap:
+          name: ml-models-config
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 500Mi
+      nodeSelector:
+        kubernetes.io/arch: amd64
+        node-type: application
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - smart-whitelist
+              topologyKey: kubernetes.io/hostname
+
+---
+# Realtime Processor Service (Critical)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime-processor
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+    component: realtime-service
+    version: v1
+    priority: critical
+spec:
+  replicas: 5  # Higher replicas for critical service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 2
+  selector:
+    matchLabels:
+      app: realtime-processor
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: realtime-processor
+        tier: core
+        component: realtime-service
+        version: v1
+        priority: critical
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3002"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ai-ninja-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      imagePullSecrets:
+      - name: registry-credentials
+      priorityClassName: high-priority
+      containers:
+      - name: realtime-processor
+        image: IMAGE_TAG  # This will be replaced during deployment
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3002"
+        - name: HOST
+          value: "0.0.0.0"
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: redis-url
+        - name: USER_MANAGEMENT_URL
+          value: "http://user-management-service:3005"
+        - name: CONVERSATION_ENGINE_URL
+          value: "http://conversation-engine-service:3003"
+        - name: AZURE_SPEECH_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: azure-speech-key
+        - name: AZURE_SPEECH_REGION
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: azure-speech-region
+        - name: WEBSOCKET_ENABLED
+          value: "true"
+        - name: AUDIO_PROCESSING_ENABLED
+          value: "true"
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: log-level
+        - name: METRICS_ENABLED
+          value: "true"
+        - name: NODE_OPTIONS
+          value: "--max_old_space_size=2048"
+        ports:
+        - name: http
+          containerPort: 3002
+          protocol: TCP
+        - name: websocket
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 9092
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 45
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+        volumeMounts:
+        - name: temp-audio
+          mountPath: /app/temp/audio
+        - name: app-logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: temp-audio
+        emptyDir:
+          sizeLimit: 2Gi
+          medium: Memory  # Use memory for faster audio processing
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+      nodeSelector:
+        kubernetes.io/arch: amd64
+        node-type: compute-optimized
+      tolerations:
+      - key: "node-type"
+        operator: "Equal"
+        value: "compute-optimized"
+        effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - realtime-processor
+            topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: node-type
+                operator: In
+                values:
+                - compute-optimized
+
+---
+# Conversation Engine Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: conversation-engine
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+    component: ai-service
+    version: v1
+spec:
+  replicas: 4
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: conversation-engine
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: conversation-engine
+        tier: core
+        component: ai-service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3003"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ai-ninja-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      imagePullSecrets:
+      - name: registry-credentials
+      containers:
+      - name: conversation-engine
+        image: IMAGE_TAG  # This will be replaced during deployment
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+        env:
+        - name: FASTAPI_ENV
+          value: "production"
+        - name: PORT
+          value: "3003"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: redis-url
+        - name: AZURE_OPENAI_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: azure-openai-key
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: azure-openai-endpoint
+        - name: PROFILE_ANALYTICS_URL
+          value: "http://profile-analytics-service:3004"
+        - name: USER_MANAGEMENT_URL
+          value: "http://user-management-service:3005"
+        - name: ML_MODEL_PATH
+          value: "/app/models"
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: log-level
+        - name: METRICS_ENABLED
+          value: "true"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        ports:
+        - name: http
+          containerPort: 3003
+          protocol: TCP
+        - name: metrics
+          containerPort: 9093
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 15
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 20
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "3Gi"
+            cpu: "2"
+        volumeMounts:
+        - name: ml-models
+          mountPath: /app/models
+          readOnly: true
+        - name: app-logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: ml-models
+        persistentVolumeClaim:
+          claimName: ml-models-pvc
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+      nodeSelector:
+        kubernetes.io/arch: amd64
+        node-type: memory-optimized
+      tolerations:
+      - key: "node-type"
+        operator: "Equal"
+        value: "memory-optimized"
+        effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - conversation-engine
+              topologyKey: kubernetes.io/hostname
+
+---
+# Profile Analytics Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profile-analytics
+  namespace: ai-ninja
+  labels:
+    app: profile-analytics
+    tier: core
+    component: analytics-service
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: profile-analytics
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: profile-analytics
+        tier: core
+        component: analytics-service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3004"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ai-ninja-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      imagePullSecrets:
+      - name: registry-credentials
+      containers:
+      - name: profile-analytics
+        image: IMAGE_TAG  # This will be replaced during deployment
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+        env:
+        - name: FASTAPI_ENV
+          value: "production"
+        - name: PORT
+          value: "3004"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: redis-url
+        - name: AZURE_TEXT_ANALYTICS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: azure-text-analytics-key
+        - name: AZURE_TEXT_ANALYTICS_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: azure-text-analytics-endpoint
+        - name: ML_MODEL_PATH
+          value: "/app/models"
+        - name: ENABLE_ML_TRAINING
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: enable-ml-training
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: log-level
+        - name: METRICS_ENABLED
+          value: "true"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        ports:
+        - name: http
+          containerPort: 3004
+          protocol: TCP
+        - name: metrics
+          containerPort: 9094
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 15
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 20
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+        volumeMounts:
+        - name: ml-models
+          mountPath: /app/models
+        - name: analytics-storage
+          mountPath: /app/storage
+        - name: app-logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: ml-models
+        persistentVolumeClaim:
+          claimName: ml-models-pvc
+      - name: analytics-storage
+        persistentVolumeClaim:
+          claimName: analytics-storage-pvc
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+      nodeSelector:
+        kubernetes.io/arch: amd64
+        node-type: memory-optimized
+      tolerations:
+      - key: "node-type"
+        operator: "Equal"
+        value: "memory-optimized"
+        effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - profile-analytics
+              topologyKey: kubernetes.io/hostname
+
+---
+# Conversation Analyzer Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: conversation-analyzer
+  namespace: ai-ninja
+  labels:
+    app: conversation-analyzer
+    tier: core
+    component: analyzer-service
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: conversation-analyzer
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: conversation-analyzer
+        tier: core
+        component: analyzer-service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3007"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ai-ninja-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      imagePullSecrets:
+      - name: registry-credentials
+      containers:
+      - name: conversation-analyzer
+        image: IMAGE_TAG  # This will be replaced during deployment
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+        env:
+        - name: FASTAPI_ENV
+          value: "production"
+        - name: PORT
+          value: "3007"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: redis-url
+        - name: CONVERSATION_ENGINE_URL
+          value: "http://conversation-engine-service:3003"
+        - name: AZURE_SPEECH_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: azure-speech-key
+        - name: AZURE_SPEECH_REGION
+          valueFrom:
+            secretKeyRef:
+              name: ai-ninja-secrets
+              key: azure-speech-region
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-ninja-config
+              key: log-level
+        - name: METRICS_ENABLED
+          value: "true"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        ports:
+        - name: http
+          containerPort: 3007
+          protocol: TCP
+        - name: metrics
+          containerPort: 9095
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 15
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 20
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+        volumeMounts:
+        - name: app-logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 500Mi
+      nodeSelector:
+        kubernetes.io/arch: amd64
+        node-type: application
+      tolerations:
+      - key: "node-type"
+        operator: "Equal"
+        value: "application"
+        effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - conversation-analyzer
+              topologyKey: kubernetes.io/hostname

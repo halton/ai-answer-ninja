@@ -1,0 +1,372 @@
+name: Test Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'feature/*' ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run nightly tests at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  NODE_VERSION: '18'
+  GO_VERSION: '1.21'  
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # Quick validation for all PRs and feature branches
+  quick-tests:
+    name: Quick Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request' || contains(github.ref, 'feature/')
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Install Dependencies
+      run: |
+        npm install
+        cd shared/service-communication && npm install
+    
+    - name: Run Quick Unit Tests
+      run: |
+        # Run fast unit tests only
+        npm run test:quick
+        cd shared/service-communication && npm test
+    
+    - name: Lint Check
+      run: |
+        npm run lint
+        cd shared/service-communication && npm run lint
+    
+    - name: Type Check
+      run: |
+        npm run type-check
+        cd shared/service-communication && npm run type-check
+
+  # Comprehensive test suite for main/develop branches
+  comprehensive-tests:
+    name: Comprehensive Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.event_name == 'schedule'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: ai_ninja_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: testpass
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    strategy:
+      matrix:
+        test-suite:
+          - name: "Unit Tests"
+            command: "npm run test:unit:all"
+            timeout: 15
+          - name: "API Integration Tests"  
+            command: "npm run test:integration:api"
+            timeout: 20
+          - name: "WebSocket Tests"
+            command: "npm run test:integration:websocket"
+            timeout: 15
+          - name: "Database Tests"
+            command: "npm run test:integration:database"
+            timeout: 20
+          - name: "E2E Tests"
+            command: "npm run test:e2e -- --env=test"
+            timeout: 25
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+        
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+    
+    - name: Install Project Dependencies
+      run: |
+        npm install
+        
+        # Install service dependencies
+        cd services/realtime-processor && npm install
+        cd ../user-management && npm install
+        cd ../smart-whitelist && go mod download
+        cd ../conversation-engine && pip install -r requirements.txt
+        cd ../profile-analytics && pip install -r requirements.txt
+        cd ../conversation-analyzer && pip install -r requirements.txt
+        
+        # Install test dependencies
+        cd ../../tests/integration && npm install
+        cd ../e2e && npm install
+        cd ../load && npm install
+    
+    - name: Setup Test Database
+      run: |
+        # Wait for PostgreSQL to be ready
+        until pg_isready -h localhost -p 5432; do sleep 1; done
+        
+        # Initialize test database
+        PGPASSWORD=testpass psql -h localhost -U test -d ai_ninja_test -f database/init/01-initialize-database.sql
+        PGPASSWORD=testpass psql -h localhost -U test -d ai_ninja_test -f database/schemas/01-core-tables.sql
+        PGPASSWORD=testpass psql -h localhost -U test -d ai_ninja_test -f database/seeds/development/01-sample-users.sql
+      env:
+        PGPASSWORD: testpass
+    
+    - name: Start Test Services
+      run: |
+        # Start services in test mode
+        docker-compose -f docker-compose.test.yml up -d --wait
+        
+        # Wait for all services to be healthy
+        timeout 120s bash -c '
+          until docker-compose -f docker-compose.test.yml ps | grep -q "healthy"; do
+            echo "Waiting for services to be healthy..."
+            sleep 5
+          done
+        '
+      env:
+        DATABASE_URL: postgresql://test:testpass@localhost:5432/ai_ninja_test
+        REDIS_URL: redis://localhost:6379
+        NODE_ENV: test
+    
+    - name: Run Test Suite - ${{ matrix.test-suite.name }}
+      timeout-minutes: ${{ matrix.test-suite.timeout }}
+      run: ${{ matrix.test-suite.command }}
+      env:
+        DATABASE_URL: postgresql://test:testpass@localhost:5432/ai_ninja_test
+        REDIS_URL: redis://localhost:6379
+        NODE_ENV: test
+        CI: true
+    
+    - name: Upload Test Results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-${{ matrix.test-suite.name }}
+        path: |
+          test-results/
+          coverage/
+          logs/
+        retention-days: 7
+    
+    - name: Upload Coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage/lcov.info
+        flags: ${{ matrix.test-suite.name }}
+        name: ${{ matrix.test-suite.name }}-coverage
+      if: success()
+
+  # Nightly load testing
+  nightly-load-tests:
+    name: Nightly Load Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event_name == 'schedule'
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Setup Load Test Environment
+      run: |
+        # Start full system for load testing
+        docker-compose -f docker-compose.test.yml up -d --scale realtime-processor=3 --scale user-management=2
+        
+        # Wait for services to be ready
+        timeout 180s bash -c '
+          until docker-compose -f docker-compose.test.yml ps | grep -q "healthy"; do
+            echo "Waiting for load test environment..."
+            sleep 10
+          done
+        '
+    
+    - name: Install Load Test Dependencies
+      run: |
+        cd tests/load
+        npm install
+    
+    - name: Run Load Test Suite
+      run: |
+        cd tests/load
+        
+        # Run all load test profiles
+        npm run test:load -- --profile=light --env=test --report
+        npm run test:load -- --profile=normal --env=test --report
+        npm run test:load -- --profile=heavy --env=test --report --skip-cleanup
+      env:
+        LOAD_TEST_DURATION_MULTIPLIER: 2  # Run longer tests for nightly runs
+    
+    - name: Generate Load Test Report
+      run: |
+        cd tests/load
+        npm run generate-report
+    
+    - name: Upload Load Test Reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: nightly-load-test-reports
+        path: tests/load/reports/
+        retention-days: 30
+    
+    - name: Check Performance Regressions
+      run: |
+        cd tests/load
+        npm run check-regressions
+    
+    - name: Notify on Performance Regression
+      if: failure()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: 'failure'
+        channel: '#performance-alerts'
+        text: |
+          🚨 Performance Regression Detected in Nightly Load Tests
+          
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          
+          Please review the load test reports.
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+  # Test result aggregation and reporting
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [quick-tests, comprehensive-tests]
+    if: always()
+    
+    steps:
+    - name: Download Test Results
+      uses: actions/download-artifact@v3
+      with:
+        path: test-results/
+    
+    - name: Generate Test Summary
+      run: |
+        # Create a comprehensive test summary
+        echo "# Test Summary for ${{ github.sha }}" > test-summary.md
+        echo "" >> test-summary.md
+        echo "## Test Results" >> test-summary.md
+        
+        # Process test results and create summary
+        for result_dir in test-results/*/; do
+          if [ -d "$result_dir" ]; then
+            echo "- $(basename "$result_dir"): ${{ needs.comprehensive-tests.result }}" >> test-summary.md
+          fi
+        done
+        
+        echo "" >> test-summary.md
+        echo "## Coverage Summary" >> test-summary.md
+        # Add coverage summary if available
+        
+        echo "" >> test-summary.md
+        echo "Generated at: $(date)" >> test-summary.md
+    
+    - name: Comment Test Summary on PR
+      uses: actions/github-script@v6
+      if: github.event_name == 'pull_request'
+      with:
+        script: |
+          const fs = require('fs');
+          const summary = fs.readFileSync('test-summary.md', 'utf8');
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: summary
+          });
+    
+    - name: Update Status Check
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const { context } = require('@actions/github');
+          
+          const conclusion = '${{ needs.comprehensive-tests.result }}' === 'success' ? 'success' : 'failure';
+          
+          github.rest.repos.createCommitStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            sha: context.sha,
+            state: conclusion,
+            context: 'comprehensive-tests',
+            description: conclusion === 'success' ? 'All tests passed' : 'Some tests failed'
+          });
+
+  # Cleanup job
+  cleanup:
+    name: Cleanup Test Resources  
+    runs-on: ubuntu-latest
+    needs: [comprehensive-tests, nightly-load-tests]
+    if: always()
+    
+    steps:
+    - name: Clean up Docker resources
+      run: |
+        # Clean up test containers and images
+        docker system prune -af --filter "label=test=true"
+        
+        # Clean up old test artifacts
+        docker volume prune -f
+    
+    - name: Cleanup test databases
+      run: |
+        # Clean up any remaining test database connections
+        echo "Test resources cleaned up"

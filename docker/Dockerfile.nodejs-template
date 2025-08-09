@@ -1,0 +1,191 @@
+# Multi-stage Node.js Dockerfile Template
+# Optimized for security, performance, and size reduction
+
+# Build stage
+FROM node:18-alpine AS builder
+
+# Build arguments
+ARG BUILD_DATE
+ARG VCS_REF
+ARG VERSION=latest
+
+# Metadata labels
+LABEL org.opencontainers.image.title="AI Ninja Node.js Service" \
+      org.opencontainers.image.description="Microservice for AI Phone Answering System" \
+      org.opencontainers.image.created=$BUILD_DATE \
+      org.opencontainers.image.revision=$VCS_REF \
+      org.opencontainers.image.version=$VERSION \
+      org.opencontainers.image.source="https://github.com/ai-ninja/ai-answer-ninja" \
+      maintainer="AI Ninja Team"
+
+# Security: Update base packages
+RUN apk update && apk upgrade && \
+    apk add --no-cache \
+    # Essential build tools
+    python3 make g++ \
+    # Security and compatibility
+    ca-certificates libc6-compat \
+    # Utilities
+    curl git && \
+    # Cleanup
+    rm -rf /var/cache/apk/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy dependency files first (for better caching)
+COPY package*.json tsconfig*.json ./
+
+# Install dependencies with security optimizations
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --only=production --ignore-scripts --no-audit && \
+    # Install dev dependencies in separate layer for build
+    npm ci --ignore-scripts --no-audit && \
+    # Remove npm cache
+    npm cache clean --force
+
+# Copy source code
+COPY src/ ./src/
+COPY scripts/ ./scripts/
+
+# Build application
+RUN npm run build && \
+    # Remove dev dependencies after build
+    npm prune --production && \
+    # Remove build artifacts not needed in runtime
+    rm -rf src/ node_modules/.cache/
+
+# Production stage
+FROM node:18-alpine AS production
+
+# Install security updates
+RUN apk update && apk upgrade && \
+    apk add --no-cache \
+    # Essential runtime tools
+    dumb-init ca-certificates tzdata curl \
+    # For health checks and monitoring
+    procps && \
+    # Cleanup
+    rm -rf /var/cache/apk/*
+
+# Create non-root user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S appuser -u 1001 -G nodejs
+
+WORKDIR /app
+
+# Copy built application and dependencies from builder
+COPY --from=builder --chown=appuser:nodejs /app/dist ./dist/
+COPY --from=builder --chown=appuser:nodejs /app/node_modules ./node_modules/
+COPY --from=builder --chown=appuser:nodejs /app/package*.json ./
+
+# Copy runtime scripts and configs
+COPY --chown=appuser:nodejs scripts/healthcheck.sh ./healthcheck.sh
+COPY --chown=appuser:nodejs config/ ./config/
+
+# Create necessary directories with proper permissions
+RUN mkdir -p logs storage/audio storage/temp && \
+    chown -R appuser:nodejs /app && \
+    chmod +x healthcheck.sh
+
+# Switch to non-root user
+USER appuser
+
+# Expose port
+EXPOSE 3000
+
+# Health check with configurable endpoint
+ARG HEALTH_CHECK_ENDPOINT=/health
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:3000${HEALTH_CHECK_ENDPOINT} || exit 1
+
+# Environment variables
+ENV NODE_ENV=production \
+    PORT=3000 \
+    HOST=0.0.0.0 \
+    NODE_OPTIONS="--max_old_space_size=2048" \
+    UV_THREADPOOL_SIZE=4
+
+# Use dumb-init for proper signal handling
+ENTRYPOINT ["dumb-init", "--"]
+
+# Start the application
+CMD ["node", "dist/server.js"]
+
+# Development stage
+FROM builder AS development
+
+# Install additional development tools
+RUN apk add --no-cache \
+    bash vim less && \
+    npm install -g nodemon
+
+# Copy all source files
+COPY . .
+
+# Create development directories
+RUN mkdir -p logs storage/audio storage/temp
+
+# Set development environment
+ENV NODE_ENV=development \
+    DEBUG=* \
+    FORCE_COLOR=1
+
+EXPOSE 3000
+
+# Development command with hot reload
+CMD ["npm", "run", "dev"]
+
+# Testing stage
+FROM development AS testing
+
+# Install testing tools
+RUN npm install -g nyc
+
+# Copy test files
+COPY tests/ ./tests/
+COPY jest.config.js ./
+COPY .eslintrc.js ./
+
+# Run all quality checks
+RUN npm run lint && \
+    npm run type-check && \
+    npm audit --audit-level=moderate && \
+    npm test -- --coverage --watchAll=false
+
+# Security scanning stage
+FROM production AS security-scan
+
+USER root
+
+# Install security scanning tools
+RUN apk add --no-cache \
+    # Trivy for vulnerability scanning
+    curl && \
+    curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+# Run security scans
+RUN trivy fs --exit-code 1 --severity HIGH,CRITICAL /app
+
+USER appuser
+
+# Production-ready stage with debugging disabled
+FROM production AS production-hardened
+
+# Remove debugging tools and minimize attack surface
+USER root
+RUN apk del curl procps && \
+    rm -rf /var/cache/apk/* /tmp/* /var/tmp/*
+
+# Switch back to app user
+USER appuser
+
+# Override environment to disable debugging
+ENV NODE_ENV=production \
+    DEBUG= \
+    NODE_OPTIONS="--max_old_space_size=2048 --no-deprecation" \
+    FORCE_COLOR=0
+
+# Use minimal health check
+HEALTHCHECK --interval=60s --timeout=5s --start-period=120s --retries=2 \
+    CMD ./healthcheck.sh || exit 1

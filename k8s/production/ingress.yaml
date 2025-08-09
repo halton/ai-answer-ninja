@@ -1,0 +1,394 @@
+# Production Ingress Configuration
+# NGINX Ingress Controller with SSL termination and advanced routing
+
+---
+# NGINX Ingress Controller Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-ingress-config
+  namespace: ai-ninja
+  labels:
+    app: ingress-nginx
+    tier: infrastructure
+data:
+  # Performance optimizations
+  worker-processes: "auto"
+  worker-connections: "65536"
+  keepalive-timeout: "75s"
+  keepalive-requests: "1000"
+  client-max-body-size: "100m"
+  
+  # Security headers
+  add-headers: "ai-ninja/security-headers"
+  
+  # SSL configuration
+  ssl-protocols: "TLSv1.2 TLSv1.3"
+  ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+  ssl-prefer-server-ciphers: "on"
+  ssl-session-cache: "shared:SSL:10m"
+  ssl-session-timeout: "10m"
+  
+  # Rate limiting
+  rate-limit-rps: "100"
+  rate-limit-connections: "50"
+  
+  # WebSocket support
+  proxy-read-timeout: "3600"
+  proxy-send-timeout: "3600"
+  proxy-connect-timeout: "60"
+
+---
+# Security Headers ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-headers
+  namespace: ai-ninja
+  labels:
+    app: security
+    tier: infrastructure
+data:
+  X-Frame-Options: "DENY"
+  X-Content-Type-Options: "nosniff"
+  X-XSS-Protection: "1; mode=block"
+  Referrer-Policy: "strict-origin-when-cross-origin"
+  Content-Security-Policy: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss: https:; media-src 'self'; object-src 'none'; frame-ancestors 'none';"
+  Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+  Permissions-Policy: "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), speaker=(self)"
+
+---
+# Main Application Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-ninja-ingress
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: infrastructure
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://app.ai-ninja.com,https://admin.ai-ninja.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Device-Fingerprint,X-Request-ID"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    
+    # Rate limiting per client IP
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    
+    # SSL configuration
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+    
+    # Security
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+spec:
+  tls:
+  - hosts:
+    - api.ai-ninja.com
+    - ws.ai-ninja.com
+    secretName: ai-ninja-tls
+  rules:
+  - host: api.ai-ninja.com
+    http:
+      paths:
+      # User Management Service
+      - path: /api/v1/users
+        pathType: Prefix
+        backend:
+          service:
+            name: user-management
+            port:
+              number: 3005
+      - path: /api/v1/auth
+        pathType: Prefix
+        backend:
+          service:
+            name: user-management
+            port:
+              number: 3005
+      
+      # Smart Whitelist Service
+      - path: /api/v1/whitelist
+        pathType: Prefix
+        backend:
+          service:
+            name: smart-whitelist
+            port:
+              number: 3006
+      
+      # Conversation Engine Service
+      - path: /api/v1/conversation
+        pathType: Prefix
+        backend:
+          service:
+            name: conversation-engine
+            port:
+              number: 3003
+      
+      # Profile Analytics Service
+      - path: /api/v1/analytics
+        pathType: Prefix
+        backend:
+          service:
+            name: profile-analytics
+            port:
+              number: 3004
+      
+      # Health checks (no auth required)
+      - path: /health
+        pathType: Prefix
+        backend:
+          service:
+            name: user-management  # Any service for basic health
+            port:
+              number: 3005
+
+---
+# WebSocket Ingress (separate for optimized configuration)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-ninja-websocket-ingress
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: infrastructure
+    component: websocket
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    
+    # WebSocket specific optimizations
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$binary_remote_addr"
+    
+    # WebSocket upgrade headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_cache_bypass $http_upgrade;
+    
+    # Rate limiting for WebSocket connections
+    nginx.ingress.kubernetes.io/rate-limit: "50"  # Lower limit for WebSocket
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    
+    # SSL
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - ws.ai-ninja.com
+    secretName: ai-ninja-websocket-tls
+  rules:
+  - host: ws.ai-ninja.com
+    http:
+      paths:
+      # Real-time Processor WebSocket endpoints
+      - path: /realtime/conversation
+        pathType: Prefix
+        backend:
+          service:
+            name: realtime-processor-headless  # Use headless service for sticky sessions
+            port:
+              number: 3002
+      - path: /realtime/audio
+        pathType: Prefix
+        backend:
+          service:
+            name: realtime-processor-headless
+            port:
+              number: 3002
+
+---
+# Admin Interface Ingress (separate domain for security)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-ninja-admin-ingress
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja-admin
+    tier: infrastructure
+    component: admin
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    
+    # Enhanced security for admin interface
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: admin-basic-auth
+    nginx.ingress.kubernetes.io/auth-realm: "AI Ninja Admin Panel"
+    
+    # Stricter rate limiting for admin
+    nginx.ingress.kubernetes.io/rate-limit: "20"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    
+    # IP whitelisting for admin (configure as needed)
+    nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,192.168.0.0/16,172.16.0.0/12"
+    
+    # SSL
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - admin.ai-ninja.com
+    secretName: ai-ninja-admin-tls
+  rules:
+  - host: admin.ai-ninja.com
+    http:
+      paths:
+      # Admin endpoints (could be served by user-management or dedicated admin service)
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: user-management
+            port:
+              number: 3005
+
+---
+# Network Policy for Ingress Controller
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingress-network-policy
+  namespace: ai-ninja
+  labels:
+    app: ingress-nginx
+    tier: infrastructure
+spec:
+  podSelector:
+    matchLabels:
+      app: ingress-nginx
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from: []  # Allow all inbound traffic to ingress controller
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          tier: core  # Allow egress to core services
+    ports:
+    - protocol: TCP
+      port: 3001
+    - protocol: TCP
+      port: 3002
+    - protocol: TCP
+      port: 3003
+    - protocol: TCP
+      port: 3004
+    - protocol: TCP
+      port: 3005
+    - protocol: TCP
+      port: 3006
+  - to: []  # Allow DNS resolution
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# Certificate Issuer for SSL
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  labels:
+    app: cert-manager
+    tier: infrastructure
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@ai-ninja.com  # Replace with actual admin email
+    privateKeySecretRef:
+      name: letsencrypt-prod-private-key
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+    - dns01:
+        cloudflare:  # Example: using Cloudflare DNS (configure as needed)
+          email: admin@ai-ninja.com
+          apiKeySecretRef:
+            name: cloudflare-api-key
+            key: api-key
+
+---
+# Basic Auth Secret for Admin Panel
+apiVersion: v1
+kind: Secret
+metadata:
+  name: admin-basic-auth
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja-admin
+    tier: infrastructure
+type: Opaque
+data:
+  # Default: admin:secure123 (change in production)
+  # Generated with: htpasswd -nb admin secure123 | base64
+  auth: YWRtaW46JGFwcjEkSDZ1YjJnSWUkZFVoOFNDb0lob3Nidm0xWE9VWTFvLwo=
+
+---
+# Service Monitor for Prometheus (if using Prometheus Operator)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nginx-ingress-metrics
+  namespace: ai-ninja
+  labels:
+    app: ingress-nginx
+    tier: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: ingress-nginx
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scheme: http
+
+---
+# Ingress Class Definition (for Kubernetes 1.18+)
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: nginx
+  labels:
+    app: ingress-nginx
+    tier: infrastructure
+spec:
+  controller: k8s.io/ingress-nginx
+  parameters:
+    apiGroup: k8s.io
+    kind: ConfigMap
+    name: nginx-ingress-config
+    namespace: ai-ninja

@@ -1,0 +1,737 @@
+# Production Monitoring and Observability Configuration
+# Prometheus, Grafana, Jaeger, and custom metrics for AI Phone Answering System
+
+---
+# Monitoring Namespace (separate for isolation)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-ninja-monitoring
+  labels:
+    app: monitoring
+    tier: infrastructure
+    istio-injection: enabled
+
+---
+# Prometheus Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: ai-ninja-monitoring
+  labels:
+    app: prometheus
+    tier: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'ai-ninja-prod'
+        environment: 'production'
+    
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+    
+    alerting:
+      alertmanagers:
+        - static_configs:
+          - targets: ['alertmanager:9093']
+    
+    scrape_configs:
+      # Kubernetes API Server
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+        - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: default;kubernetes;https
+      
+      # Node Exporter
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+        - role: node
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics
+      
+      # Core Services
+      - job_name: 'ai-ninja-services'
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names: ['ai-ninja']
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+          action: replace
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+          target_label: __address__
+        - action: labelmap
+          regex: __meta_kubernetes_service_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+        - source_labels: [__meta_kubernetes_service_name]
+          action: replace
+          target_label: kubernetes_name
+      
+      # NGINX Ingress Metrics
+      - job_name: 'nginx-ingress'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names: ['ingress-nginx']
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          action: replace
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+          target_label: __address__
+      
+      # Custom Application Metrics
+      - job_name: 'ai-ninja-custom-metrics'
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names: ['ai-ninja']
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_annotation_ai_ninja_custom_metrics]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_service_name]
+          action: replace
+          target_label: service_name
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod_name
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: 'ai_ninja_.*'
+          action: keep
+
+  # AI-specific alerting rules
+  ai-ninja-rules.yml: |
+    groups:
+    - name: ai-ninja.performance
+      rules:
+      - alert: HighResponseLatency
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service=~"realtime-processor|conversation-engine"}[5m])) by (le, service)) > 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response latency detected"
+          description: "{{ $labels.service }} has 95th percentile latency above 800ms for 2 minutes"
+      
+      - alert: CriticalResponseLatency
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service=~"realtime-processor|conversation-engine"}[5m])) by (le, service)) > 1.5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical response latency detected"
+          description: "{{ $labels.service }} has 95th percentile latency above 1.5s"
+      
+      - alert: HighErrorRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is above 5% for 2 minutes"
+      
+      - alert: WebSocketConnectionDrop
+        expr: sum(rate(websocket_connections_closed_total[5m])) > 10
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High WebSocket connection drop rate"
+          description: "WebSocket connections are dropping at high rate: {{ $value }}/sec"
+    
+    - name: ai-ninja.resources
+      rules:
+      - alert: HighMemoryUsage
+        expr: container_memory_usage_bytes{pod=~".*ai-ninja.*"} / container_spec_memory_limit_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Pod {{ $labels.pod }} memory usage is above 90%"
+      
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{pod=~".*ai-ninja.*"}[5m]) / container_spec_cpu_quota * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "Pod {{ $labels.pod }} CPU usage is above 85%"
+    
+    - name: ai-ninja.business
+      rules:
+      - alert: LowAIResponseQuality
+        expr: avg(ai_response_quality_score) < 0.7
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI response quality degraded"
+          description: "Average AI response quality score is below 0.7"
+      
+      - alert: HighCallVolume
+        expr: sum(increase(incoming_calls_total[1m])) > 100
+        for: 2m
+        labels:
+          severity: info
+        annotations:
+          summary: "High call volume detected"
+          description: "Incoming call volume is {{ $value }} calls/minute"
+
+---
+# Prometheus Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: ai-ninja-monitoring
+  labels:
+    app: prometheus
+    tier: monitoring
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+        tier: monitoring
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.45.0
+        args:
+        - --config.file=/etc/prometheus/prometheus.yml
+        - --storage.tsdb.path=/prometheus
+        - --storage.tsdb.retention.time=30d
+        - --storage.tsdb.retention.size=50GB
+        - --web.console.libraries=/etc/prometheus/console_libraries
+        - --web.console.templates=/etc/prometheus/consoles
+        - --web.enable-lifecycle
+        - --web.enable-admin-api
+        - --web.external-url=https://prometheus.ai-ninja.com
+        ports:
+        - containerPort: 9090
+          name: http
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/prometheus
+        - name: storage-volume
+          mountPath: /prometheus
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 9090
+          initialDelaySeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9090
+          initialDelaySeconds: 5
+          timeoutSeconds: 10
+      volumes:
+      - name: config-volume
+        configMap:
+          name: prometheus-config
+      - name: storage-volume
+        persistentVolumeClaim:
+          claimName: prometheus-storage
+
+---
+# Prometheus Storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-storage
+  namespace: ai-ninja-monitoring
+  labels:
+    app: prometheus
+    tier: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# Prometheus Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: ai-ninja-monitoring
+  labels:
+    app: prometheus
+    tier: monitoring
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9090
+    targetPort: 9090
+    name: http
+  selector:
+    app: prometheus
+
+---
+# Prometheus ServiceAccount and RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: ai-ninja-monitoring
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/proxy
+  - services
+  - endpoints
+  - pods
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - extensions
+  resources:
+  - ingresses
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: ai-ninja-monitoring
+
+---
+# Grafana Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+  namespace: ai-ninja-monitoring
+  labels:
+    app: grafana
+    tier: monitoring
+data:
+  grafana.ini: |
+    [server]
+    root_url = https://grafana.ai-ninja.com
+    serve_from_sub_path = true
+    
+    [security]
+    admin_user = admin
+    admin_password = ${GRAFANA_ADMIN_PASSWORD}
+    secret_key = ${GRAFANA_SECRET_KEY}
+    
+    [auth]
+    disable_login_form = false
+    disable_signout_menu = false
+    
+    [auth.anonymous]
+    enabled = false
+    
+    [analytics]
+    reporting_enabled = false
+    check_for_updates = false
+    
+    [snapshots]
+    external_enabled = false
+    
+    [database]
+    type = postgres
+    host = postgresql:5432
+    name = grafana
+    user = grafana
+    password = ${GRAFANA_DB_PASSWORD}
+
+  datasources.yml: |
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      access: proxy
+      url: http://prometheus:9090
+      isDefault: true
+      editable: true
+    - name: Jaeger
+      type: jaeger
+      access: proxy
+      url: http://jaeger-query:16686
+
+---
+# Grafana Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: ai-ninja-monitoring
+  labels:
+    app: grafana
+    tier: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+        tier: monitoring
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        fsGroup: 472
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.1.0
+        ports:
+        - containerPort: 3000
+          name: http
+        env:
+        - name: GRAFANA_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: admin-password
+        - name: GRAFANA_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: secret-key
+        - name: GRAFANA_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: db-password
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/grafana
+        - name: storage-volume
+          mountPath: /var/lib/grafana
+        - name: dashboards-volume
+          mountPath: /var/lib/grafana/dashboards
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 60
+          timeoutSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 10
+          timeoutSeconds: 10
+      volumes:
+      - name: config-volume
+        configMap:
+          name: grafana-config
+      - name: storage-volume
+        persistentVolumeClaim:
+          claimName: grafana-storage
+      - name: dashboards-volume
+        configMap:
+          name: grafana-dashboards
+
+---
+# Grafana Storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-storage
+  namespace: ai-ninja-monitoring
+  labels:
+    app: grafana
+    tier: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-ssd
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# Grafana Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: ai-ninja-monitoring
+  labels:
+    app: grafana
+    tier: monitoring
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3000
+    targetPort: 3000
+    name: http
+  selector:
+    app: grafana
+
+---
+# Grafana Secrets
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-secrets
+  namespace: ai-ninja-monitoring
+  labels:
+    app: grafana
+    tier: monitoring
+type: Opaque
+data:
+  # Change these in production
+  admin-password: YWRtaW4xMjM=  # admin123
+  secret-key: c2VjdXJlLWdyYWZhbmEta2V5LTIwMjQ=  # secure-grafana-key-2024
+  db-password: Z3JhZmFuYWRiMTIz  # grafanadb123
+
+---
+# AI Ninja Dashboards ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: ai-ninja-monitoring
+  labels:
+    app: grafana
+    tier: monitoring
+data:
+  ai-ninja-overview.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "AI Ninja - System Overview",
+        "tags": ["ai-ninja", "overview"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Call Volume",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sum(increase(incoming_calls_total[5m]))",
+                "legendFormat": "Incoming Calls (5min)"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Response Latency (P95)",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service))",
+                "legendFormat": "{{ service }} P95"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "AI Response Quality",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "avg(ai_response_quality_score)",
+                "legendFormat": "Quality Score"
+              }
+            ],
+            "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8}
+          },
+          {
+            "id": 4,
+            "title": "Active WebSocket Connections",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "sum(websocket_connections_active)",
+                "legendFormat": "Active Connections"
+              }
+            ],
+            "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8}
+          }
+        ],
+        "time": {"from": "now-1h", "to": "now"},
+        "refresh": "30s"
+      }
+    }
+
+---
+# Jaeger Deployment (for distributed tracing)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: ai-ninja-monitoring
+  labels:
+    app: jaeger
+    tier: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+        tier: monitoring
+    spec:
+      containers:
+      - name: jaeger
+        image: jaegertracing/all-in-one:1.49
+        args:
+        - --memory.max-traces=50000
+        - --query.base-path=/jaeger
+        ports:
+        - containerPort: 16686
+          name: query
+        - containerPort: 14268
+          name: collector
+        - containerPort: 6831
+          name: agent-zipkin
+          protocol: UDP
+        - containerPort: 6832
+          name: agent-jaeger
+          protocol: UDP
+        env:
+        - name: SPAN_STORAGE_TYPE
+          value: "memory"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+---
+# Jaeger Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-query
+  namespace: ai-ninja-monitoring
+  labels:
+    app: jaeger
+    tier: monitoring
+spec:
+  type: ClusterIP
+  ports:
+  - port: 16686
+    targetPort: 16686
+    name: query
+  selector:
+    app: jaeger
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-collector
+  namespace: ai-ninja-monitoring
+  labels:
+    app: jaeger
+    tier: monitoring
+spec:
+  type: ClusterIP
+  ports:
+  - port: 14268
+    targetPort: 14268
+    name: collector
+  - port: 6831
+    targetPort: 6831
+    name: agent-zipkin
+    protocol: UDP
+  - port: 6832
+    targetPort: 6832
+    name: agent-jaeger
+    protocol: UDP
+  selector:
+    app: jaeger

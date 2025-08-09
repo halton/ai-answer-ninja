@@ -1,0 +1,124 @@
+# Staging Environment Configuration
+# Pre-production environment for testing and validation
+
+# Environment Info
+ENVIRONMENT=staging
+NODE_ENV=production
+LOG_LEVEL=info
+
+# Kubernetes Configuration
+NAMESPACE=ai-ninja-staging
+KUBECONFIG=/path/to/staging-kubeconfig
+CLUSTER_CONTEXT=staging-cluster
+
+# Database Configuration (Staging)
+DB_HOST=postgresql-staging.internal
+DB_PORT=5432
+DB_NAME=ai_ninja_staging
+DB_MAX_CONNECTIONS=15
+DB_CONNECTION_TIMEOUT=5000
+DB_SSL=true
+DB_SSL_CERT_PATH=/etc/ssl/certs/postgresql-staging.crt
+
+# Redis Configuration (Staging)
+REDIS_HOST=redis-staging.internal
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_CLUSTER_MODE=false
+
+# Docker Registry (Staging)
+DOCKER_REGISTRY=ghcr.io/ai-ninja
+REGISTRY_URL=ghcr.io
+PUSH_IMAGES=true
+
+# Azure Services (Staging)
+AZURE_SPEECH_REGION=eastus2
+AZURE_OPENAI_ENDPOINT=https://ai-ninja-staging-openai.openai.azure.com
+AZURE_SPEECH_ENDPOINT=https://ai-ninja-staging-speech.cognitiveservices.azure.com
+
+# Security Settings (Production-like)
+JWT_EXPIRES_IN=1h
+JWT_REFRESH_EXPIRES_IN=7d
+SESSION_TIMEOUT=1800
+PASSWORD_MIN_LENGTH=12
+PASSWORD_REQUIRE_SPECIAL_CHARS=true
+
+# Feature Flags (Staging)
+FEATURE_EMAIL_VERIFICATION_REQUIRED=true
+FEATURE_MFA_REQUIRED=false
+FEATURE_RATE_LIMITING_ENABLED=true
+FEATURE_AUDIT_LOGGING_ENABLED=true
+FEATURE_SECURITY_HEADERS_ENABLED=true
+FEATURE_MOCK_AZURE_SERVICES=false
+
+# Performance Settings (Production-like)
+MAX_CONCURRENT_CALLS=500
+WEBSOCKET_TIMEOUT=300000
+HTTP_TIMEOUT=30000
+AUDIO_PROCESSING_TIMEOUT=5000
+PROCESSING_PIPELINE_TIMEOUT=1500
+
+# Scaling Configuration
+MIN_REPLICAS=2
+MAX_REPLICAS=10
+TARGET_CPU_UTILIZATION=70
+TARGET_MEMORY_UTILIZATION=80
+
+# CORS Configuration (Restricted)
+CORS_ORIGINS=https://staging.ai-ninja.com,https://admin-staging.ai-ninja.com
+CORS_CREDENTIALS=true
+
+# Logging Configuration
+LOG_TO_FILE=true
+LOG_TO_CONSOLE=true
+LOG_STRUCTURED=true
+LOG_RETENTION_DAYS=30
+
+# Monitoring (Full Monitoring)
+METRICS_ENABLED=true
+HEALTH_CHECK_INTERVAL=10
+PROMETHEUS_METRICS_PORT=9090
+JAEGER_ENABLED=true
+GRAFANA_ENABLED=true
+
+# Storage Configuration
+STORAGE_CLASS=standard-ssd
+BACKUP_ENABLED=true
+BACKUP_RETENTION_DAYS=7
+BACKUP_SCHEDULE=0 2 * * *
+
+# Rate Limiting (Staging)
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_WINDOW=900
+RATE_LIMIT_MAX_REQUESTS=1000
+RATE_LIMIT_REDIS_KEY_PREFIX=staging:rate_limit
+
+# SSL/TLS Configuration
+SSL_ENABLED=true
+CERT_MANAGER_ISSUER=letsencrypt-staging
+FORCE_HTTPS=true
+
+# Email Configuration (Staging)
+EMAIL_PROVIDER=azure_communication_services
+EMAIL_FROM=noreply@staging.ai-ninja.com
+
+# Integration Testing
+INTEGRATION_TESTS_ENABLED=true
+LOAD_TESTING_ENABLED=true
+PERFORMANCE_BENCHMARKING_ENABLED=true
+
+# External Services
+EXTERNAL_API_TIMEOUT=10000
+RETRY_ATTEMPTS=3
+RETRY_BACKOFF=exponential
+
+# Cache Configuration
+CACHE_TTL_DEFAULT=3600
+CACHE_TTL_USER_PROFILE=1800
+CACHE_TTL_WHITELIST=600
+CACHE_WARMING_ENABLED=true
+
+# Security Scanning
+SECURITY_SCANNING_ENABLED=true
+VULNERABILITY_SCANNING_SCHEDULE=0 3 * * 0
+DEPENDENCY_SCANNING_ENABLED=true
