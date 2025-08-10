@@ -34,6 +34,32 @@ const Dashboard: React.FC = () => {
     activeUsersGrowth: -3.2,
     blockedCallsGrowth: 8.7,
     aiResponsesGrowth: 15.3,
+    // 新增性能指标
+    averageResponseTime: 485,
+    cacheHitRate: 87.3,
+    systemHealth: 'excellent',
+    errorRate: 0.12
+  })
+
+  const [performanceMetrics, setPerformanceMetrics] = useState({
+    latency: {
+      total: 485,
+      preprocessing: 35,
+      stt: 145,
+      aiGeneration: 220,
+      tts: 85
+    },
+    throughput: {
+      callsPerMinute: 2.3,
+      messagesPerSecond: 45,
+      concurrentUsers: 28
+    },
+    resources: {
+      cpuUsage: 45,
+      memoryUsage: 62,
+      diskUsage: 34,
+      networkLatency: 12
+    }
   })
 
   // 初始化数据

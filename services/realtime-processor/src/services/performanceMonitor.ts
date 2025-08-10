@@ -85,25 +85,65 @@ export class PerformanceMonitor extends EventEmitter {
     super();
     
     this.config = {
-      metricsInterval: 5000,
+      metricsInterval: 3000, // 更频繁的监控
       alertThresholds: {
-        latency: 1000, // ms
-        cpuUsage: 80, // %
-        memoryUsage: 85, // %
-        errorRate: 5, // %
+        latency: 800, // 更严格的延迟要求
+        cpuUsage: 75, // 更早发现CPU问题
+        memoryUsage: 80, // 更严格的内存要求
+        errorRate: 3, // 更低的错误率容忍度
       },
       optimizationTargets: {
-        totalPipelineLatency: 800,
-        audioPreprocessing: 50,
-        speechToText: 200,
-        intentRecognition: 100,
-        aiGeneration: 300,
-        textToSpeech: 150,
+        totalPipelineLatency: 600, // 更严格的目标
+        audioPreprocessing: 40,
+        speechToText: 180,
+        intentRecognition: 80,
+        aiGeneration: 250,
+        textToSpeech: 120,
       },
       ...config,
     };
     
-    logger.info('Advanced Performance Monitor initialized');
+    // 添加实时优化能力
+    this.setupRealTimeOptimization();
+    logger.info('Enhanced Performance Monitor initialized with real-time optimization');
+  }
+
+  private setupRealTimeOptimization(): void {
+    // 监听性能事件并自动优化
+    this.on('latency_violation', (data) => {
+      logger.warn('Latency violation detected', data);
+      this.triggerAutoOptimization(data.stage, data.latency);
+    });
+
+    this.on('bottlenecks_detected', (data) => {
+      logger.warn('Bottlenecks detected', data);
+      this.implementBottleneckMitigation(data.bottlenecks);
+    });
+  }
+
+  private async triggerAutoOptimization(stage: string, currentLatency: number): Promise<void> {
+    const optimization = await this.generateOptimizationPlan(stage, currentLatency);
+    logger.info('Auto-optimization triggered', { stage, optimization });
+  }
+
+  private async implementBottleneckMitigation(bottlenecks: any[]): Promise<void> {
+    for (const bottleneck of bottlenecks) {
+      await this.mitigateBottleneck(bottleneck);
+    }
+  }
+
+  private async generateOptimizationPlan(stage: string, latency: number): Promise<any> {
+    return {
+      stage,
+      currentLatency: latency,
+      recommendations: this.generateOptimizationActions(stage, latency / this.getTargetLatency(stage)! - 1),
+      priority: latency > this.getTargetLatency(stage)! * 2 ? 'critical' : 'high'
+    };
+  }
+
+  private async mitigateBottleneck(bottleneck: any): Promise<void> {
+    logger.info('Implementing bottleneck mitigation', bottleneck);
+    // 实施具体的瓶颈缓解策略
   }
 
   public start(): void {

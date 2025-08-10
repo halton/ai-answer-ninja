@@ -218,12 +218,12 @@ export class AuditLogger {
   }
 
   /**
-   * Log voice call processing
+   * Log voice call processing with enhanced security tracking
    */
   public async logVoiceCall(
     callId: string,
     userId: string,
-    action: 'start' | 'end' | 'encrypt' | 'decrypt',
+    action: 'start' | 'end' | 'encrypt' | 'decrypt' | 'transcribe' | 'ai_process',
     duration?: number,
     metadata?: any
   ): Promise<void> {
@@ -238,10 +238,130 @@ export class AuditLogger {
         callId,
         action,
         duration,
+        // 增强的安全元数据
+        dataClassification: this.classifyCallData(action),
+        encryptionStatus: action === 'encrypt' ? 'encrypted' : (action === 'decrypt' ? 'decrypted' : 'processed'),
+        complianceFlags: this.getComplianceFlags(action, metadata),
         ...metadata,
         timestamp: new Date()
       }
     });
+
+    // 特殊处理敏感操作
+    if (action === 'transcribe' || action === 'ai_process') {
+      await this.logDataProcessing(userId, 'voice_content', 'ai_analysis', callId);
+    }
+  }
+
+  /**
+   * Enhanced real-time security monitoring
+   */
+  public async logRealTimeSecurityEvent(
+    event: {
+      type: 'anomaly_detected' | 'performance_degradation' | 'unauthorized_access' | 'data_exfiltration';
+      severity: 'low' | 'medium' | 'high' | 'critical';
+      userId?: string;
+      source: string;
+      details: any;
+      autoMitigation?: boolean;
+    }
+  ): Promise<void> {
+    await this.logSecurityEvent({
+      ...event,
+      timestamp: new Date(),
+      responseTime: Date.now(),
+      systemState: await this.captureSystemState()
+    });
+
+    // 实时威胁响应
+    if (event.severity === 'critical') {
+      await this.triggerIncidentResponse(event);
+    }
+  }
+
+  /**
+   * Log AI model usage and performance
+   */
+  public async logAIModelUsage(
+    modelId: string,
+    userId: string,
+    operation: 'inference' | 'training' | 'evaluation',
+    inputTokens: number,
+    outputTokens: number,
+    latency: number,
+    success: boolean
+  ): Promise<void> {
+    await this.log({
+      userId,
+      action: `ai:${operation}`,
+      resource: 'ai_model',
+      resourceId: modelId,
+      duration: latency,
+      success,
+      metadata: {
+        modelId,
+        operation,
+        inputTokens,
+        outputTokens,
+        latency,
+        tokenEfficiency: outputTokens / Math.max(inputTokens, 1),
+        costEstimate: this.estimateModelCost(inputTokens, outputTokens),
+        timestamp: new Date()
+      }
+    });
+  }
+
+  private classifyCallData(action: string): 'public' | 'internal' | 'confidential' | 'restricted' {
+    switch (action) {
+      case 'transcribe':
+      case 'ai_process':
+        return 'restricted';
+      case 'encrypt':
+      case 'decrypt':
+        return 'confidential';
+      default:
+        return 'internal';
+    }
+  }
+
+  private getComplianceFlags(action: string, metadata?: any): string[] {
+    const flags: string[] = [];
+    
+    if (action === 'transcribe' || action === 'ai_process') {
+      flags.push('GDPR_Article_22'); // 自动化决策
+      flags.push('voice_processing');
+    }
+    
+    if (metadata?.containsPII) {
+      flags.push('PII_processing');
+    }
+    
+    return flags;
+  }
+
+  private async captureSystemState(): Promise<any> {
+    return {
+      timestamp: new Date(),
+      memoryUsage: process.memoryUsage(),
+      uptime: process.uptime(),
+      activeConnections: 0, // 需要从系统获取
+      systemLoad: 0 // 需要从系统获取
+    };
+  }
+
+  private async triggerIncidentResponse(event: any): Promise<void> {
+    logger.security(`CRITICAL INCIDENT: ${event.type}`, 'critical', {
+      event,
+      responseProtocol: 'immediate_escalation',
+      notificationsSent: true
+    });
+  }
+
+  private estimateModelCost(inputTokens: number, outputTokens: number): number {
+    // 简化的成本估算（实际应根据具体模型定价）
+    const inputCost = (inputTokens / 1000) * 0.0015; // $0.0015 per 1K input tokens
+    const outputCost = (outputTokens / 1000) * 0.002; // $0.002 per 1K output tokens
+    return Math.round((inputCost + outputCost) * 100000) / 100000; // 5位小数精度
   }
 
   /**

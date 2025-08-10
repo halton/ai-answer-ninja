@@ -5,13 +5,21 @@
 -- 实时查询函数（<5ms响应要求）
 -- ===========================================
 
--- 快速白名单检查函数
+-- 快速白名单检查函数（优化版 - 目标<3ms）
 CREATE OR REPLACE FUNCTION check_whitelist_fast(p_user_id UUID, p_phone VARCHAR(20))
 RETURNS BOOLEAN AS $$
 DECLARE
     result BOOLEAN := false;
+    cache_key TEXT;
 BEGIN
-    -- 使用优化索引进行快速查找
+    -- 生成缓存键
+    cache_key := 'wl:' || p_user_id::TEXT || ':' || p_phone;
+    
+    -- 尝试从Redis缓存获取（需要Redis扩展，这里模拟）
+    -- SELECT redis_get(cache_key) INTO result;
+    -- IF result IS NOT NULL THEN RETURN result; END IF;
+    
+    -- 使用优化的查询计划
     SELECT EXISTS (
         SELECT 1 FROM smart_whitelists 
         WHERE user_id = p_user_id 
@@ -20,16 +28,41 @@ BEGIN
         AND (expires_at IS NULL OR expires_at > NOW())
     ) INTO result;
     
-    -- 更新命中统计（异步，不影响响应时间）
+    -- 缓存结果（5分钟TTL）
+    -- PERFORM redis_setex(cache_key, 300, result::TEXT);
+    
+    -- 异步更新命中统计（使用NOTIFY避免阻塞）
     IF result THEN
-        UPDATE smart_whitelists 
-        SET hit_count = hit_count + 1, last_hit_at = NOW()
-        WHERE user_id = p_user_id AND contact_phone = p_phone;
+        PERFORM pg_notify('whitelist_hit', 
+            json_build_object('user_id', p_user_id, 'phone', p_phone)::text);
     END IF;
     
     RETURN result;
 END;
 $$ LANGUAGE plpgsql STABLE;
+
+-- 异步处理白名单命中统计
+CREATE OR REPLACE FUNCTION process_whitelist_hits()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- 批量更新命中统计，减少锁竞争
+    WITH hits AS (
+        SELECT user_id, contact_phone, COUNT(*) as hit_count
+        FROM temp_whitelist_hits
+        GROUP BY user_id, contact_phone
+    )
+    UPDATE smart_whitelists sw
+    SET hit_count = sw.hit_count + h.hit_count, 
+        last_hit_at = NOW()
+    FROM hits h
+    WHERE sw.user_id = h.user_id AND sw.contact_phone = h.contact_phone;
+    
+    -- 清理临时表
+    DELETE FROM temp_whitelist_hits WHERE processed_at < NOW() - INTERVAL '1 minute';
+    
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
 
 -- 创建函数索引以优化白名单检查
 CREATE INDEX CONCURRENTLY idx_whitelist_function_support 

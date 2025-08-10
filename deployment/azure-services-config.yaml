@@ -1,0 +1,116 @@
+# Azure服务集成配置
+# 并行执行任务2: Azure语音+AI+通信服务配置
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: azure-services-config
+  namespace: ai-answer-ninja-prod
+data:
+  # Azure Speech Services配置
+  AZURE_SPEECH_REGION: "eastasia"
+  AZURE_SPEECH_ENDPOINT: "https://eastasia.api.cognitive.microsoft.com/"
+  AZURE_SPEECH_LANGUAGE: "zh-CN"
+  AZURE_SPEECH_MODEL: "latest"
+  
+  # Azure OpenAI配置
+  AZURE_OPENAI_ENDPOINT: "https://ai-ninja-openai.openai.azure.com/"
+  AZURE_OPENAI_API_VERSION: "2024-02-15-preview"
+  AZURE_OPENAI_MODEL_DEPLOYMENT: "gpt-4-turbo"
+  AZURE_OPENAI_MAX_TOKENS: "1000"
+  AZURE_OPENAI_TEMPERATURE: "0.7"
+  
+  # Azure Communication Services配置
+  AZURE_COMMUNICATION_ENDPOINT: "https://ai-ninja-comm.communication.azure.com"
+  AZURE_COMMUNICATION_PHONE_NUMBER: "+8613800138000"
+  AZURE_COMMUNICATION_CALLBACK_URL: "https://api.ai-ninja.com/webhook/calls"
+  
+  # 性能优化配置
+  AZURE_SPEECH_CONCURRENT_CONNECTIONS: "10"
+  AZURE_OPENAI_CONCURRENT_REQUESTS: "5"
+  AZURE_REQUEST_TIMEOUT: "30000"
+  AZURE_RETRY_ATTEMPTS: "3"
+  AZURE_RETRY_DELAY: "1000"
+  
+  # 缓存配置
+  ENABLE_RESPONSE_CACHE: "true"
+  CACHE_TTL_SECONDS: "300"
+  PRELOAD_COMMON_RESPONSES: "true"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: azure-services-secrets
+  namespace: ai-answer-ninja-prod
+type: Opaque
+data:
+  # Base64编码的Azure服务密钥（生产环境需要真实值）
+  AZURE_SPEECH_KEY: "WU9VUl9TUEVFQ0hfS0VZX0hFUkU="  # YOUR_SPEECH_KEY_HERE
+  AZURE_OPENAI_KEY: "WU9VUl9PUEVOQUJFX0tFWV9IRVJF"    # YOUR_OPENAI_KEY_HERE  
+  AZURE_COMMUNICATION_KEY: "WU9VUl9DT01NX0tFWV9IRVJF"   # YOUR_COMM_KEY_HERE
+
+---
+# Azure服务健康检查Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: azure-services-health-check
+  namespace: ai-answer-ninja-prod
+spec:
+  template:
+    spec:
+      containers:
+      - name: health-checker
+        image: curlimages/curl:latest
+        command: ["/bin/sh"]
+        args:
+        - -c
+        - |
+          echo "检查Azure服务连通性..."
+          
+          # 检查Azure Speech Service
+          echo "测试Azure Speech Services..."
+          curl -f "https://eastasia.api.cognitive.microsoft.com/sts/v1.0/issuetoken" \
+            -H "Ocp-Apim-Subscription-Key: ${AZURE_SPEECH_KEY}" \
+            -X POST || echo "Speech Service检查失败"
+          
+          # 检查Azure OpenAI
+          echo "测试Azure OpenAI..."
+          curl -f "${AZURE_OPENAI_ENDPOINT}openai/deployments?api-version=2024-02-15-preview" \
+            -H "api-key: ${AZURE_OPENAI_KEY}" || echo "OpenAI Service检查失败"
+          
+          # 检查Azure Communication Services  
+          echo "测试Azure Communication Services..."
+          curl -f "${AZURE_COMMUNICATION_ENDPOINT}/common/telemetry/system-info?api-version=2021-10-01-preview" \
+            -H "Authorization: Bearer ${AZURE_COMMUNICATION_KEY}" || echo "Communication Service检查失败"
+          
+          echo "Azure服务健康检查完成"
+        env:
+        - name: AZURE_SPEECH_KEY
+          valueFrom:
+            secretKeyRef:
+              name: azure-services-secrets
+              key: AZURE_SPEECH_KEY
+        - name: AZURE_OPENAI_KEY
+          valueFrom:
+            secretKeyRef:
+              name: azure-services-secrets
+              key: AZURE_OPENAI_KEY
+        - name: AZURE_COMMUNICATION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: azure-services-secrets
+              key: AZURE_COMMUNICATION_KEY
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: azure-services-config
+              key: AZURE_OPENAI_ENDPOINT
+        - name: AZURE_COMMUNICATION_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: azure-services-config
+              key: AZURE_COMMUNICATION_ENDPOINT
+      restartPolicy: Never
+  backoffLimit: 3
