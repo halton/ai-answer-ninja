@@ -1,0 +1,324 @@
+groups:
+  - name: alert-inhibition
+    interval: 30s
+    rules:
+      # ==========================================
+      # Smart Alert Suppression Rules
+      # ==========================================
+      
+      # Parent service down should suppress dependent service alerts
+      - alert: PostgreSQLDown
+        expr: up{job="postgres-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: sre
+          component: database
+          inhibits: "database-dependent"
+        annotations:
+          summary: "PostgreSQL database is down"
+          description: "Main database is unavailable - dependent alerts will be suppressed"
+          impact: "Critical - All database-dependent services affected"
+          action: "Restore database service immediately"
+          
+      - alert: RedisDown
+        expr: up{job="redis-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: sre
+          component: cache
+          inhibits: "cache-dependent"
+        annotations:
+          summary: "Redis cache is down"
+          description: "Cache service is unavailable - dependent alerts will be suppressed"
+          impact: "High - Caching functionality lost, performance degraded"
+          action: "Restore Redis service"
+          
+      - alert: AzureServicesDown
+        expr: ai_ninja_azure_service_health == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: sre
+          component: external-dependency
+          inhibits: "azure-dependent"
+        annotations:
+          summary: "Azure services are experiencing issues"
+          description: "External Azure dependencies are down - related alerts suppressed"
+          impact: "Critical - AI functionality severely impacted"
+          action: "Monitor Azure status page and implement fallback if available"
+          
+      # ==========================================
+      # Kubernetes Infrastructure Dependencies
+      # ==========================================
+      
+      - alert: KubernetesAPIServerDown
+        expr: up{job="kubernetes-apiserver"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: sre
+          component: kubernetes
+          inhibits: "kubernetes-dependent"
+        annotations:
+          summary: "Kubernetes API server is down"
+          description: "K8s control plane unavailable - pod/service alerts suppressed"
+          impact: "Critical - Cannot manage workloads"
+          action: "Check Kubernetes master nodes immediately"
+          
+      - alert: EtcdDown
+        expr: up{job="etcd"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: sre
+          component: kubernetes
+          inhibits: "kubernetes-dependent"
+        annotations:
+          summary: "etcd cluster is down"
+          description: "Kubernetes storage backend unavailable"
+          impact: "Critical - Cluster state cannot be persisted"
+          action: "Restore etcd cluster immediately"
+          
+      # ==========================================
+      # Network Infrastructure Dependencies
+      # ==========================================
+      
+      - alert: NetworkPartition
+        expr: up{job="node-exporter"} < bool 0.5 * count(up{job="node-exporter"})
+        for: 1m
+        labels:
+          severity: critical
+          team: sre
+          component: network
+          inhibits: "network-dependent"
+        annotations:
+          summary: "Network partition detected"
+          description: "More than 50% of nodes are unreachable"
+          impact: "Critical - Split-brain scenario possible"
+          action: "Check network infrastructure and DNS"
+          
+      - alert: DNSResolutionFailed
+        expr: probe_success{job="blackbox-dns"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: sre
+          component: network
+          inhibits: "dns-dependent"
+        annotations:
+          summary: "DNS resolution failing"
+          description: "DNS queries are failing - service discovery affected"
+          impact: "High - Service-to-service communication impacted"
+          action: "Check DNS servers and network connectivity"
+          
+      # ==========================================
+      # Business Hours Context
+      # ==========================================
+      
+      - alert: MaintenanceWindowActive
+        expr: ai_ninja_maintenance_mode == 1
+        for: 0m
+        labels:
+          severity: info
+          team: sre
+          component: maintenance
+          inhibits: "maintenance-related"
+        annotations:
+          summary: "Maintenance window is active"
+          description: "Scheduled maintenance in progress - some alerts suppressed"
+          impact: "Expected - Services may be temporarily unavailable"
+          action: "Monitor maintenance progress"
+          
+      - alert: LoadTestInProgress
+        expr: ai_ninja_load_test_active == 1
+        for: 0m
+        labels:
+          severity: info
+          team: sre
+          component: testing
+          inhibits: "load-test-related"
+        annotations:
+          summary: "Load testing in progress"
+          description: "Active load test detected - performance alerts suppressed"
+          impact: "Expected - High resource usage during testing"
+          action: "Monitor test results"
+          
+  - name: alert-correlation
+    interval: 30s
+    rules:
+      # ==========================================
+      # Correlated Alert Patterns
+      # ==========================================
+      
+      - alert: CascadingFailure
+        expr: >
+          (
+            count(ALERTS{alertname="ServiceDown", alertstate="firing"}) > 2
+          ) and (
+            count(ALERTS{alertname=~"High.*Usage", alertstate="firing"}) > 1
+          )
+        for: 2m
+        labels:
+          severity: critical
+          team: sre
+          component: system-wide
+          pattern: "cascading-failure"
+        annotations:
+          summary: "Cascading failure pattern detected"
+          description: "Multiple services down with resource alerts - potential cascade"
+          impact: "Critical - System-wide outage possible"
+          action: "Activate incident response team and war room"
+          escalation_required: "immediate"
+          
+      - alert: ResourceExhaustionPattern
+        expr: >
+          (
+            count(ALERTS{alertname=~".*CPUUsage", alertstate="firing"}) > 0
+          ) and (
+            count(ALERTS{alertname=~".*MemoryUsage", alertstate="firing"}) > 0
+          ) and (
+            count(ALERTS{alertname=~".*DiskUsage", alertstate="firing"}) > 0
+          )
+        for: 5m
+        labels:
+          severity: critical
+          team: sre
+          component: capacity
+          pattern: "resource-exhaustion"
+        annotations:
+          summary: "Resource exhaustion pattern across multiple dimensions"
+          description: "CPU, memory, and disk alerts active simultaneously"
+          impact: "Critical - System capacity exceeded"
+          action: "Emergency scaling or load reduction required"
+          
+      - alert: DatabaseStressPattern
+        expr: >
+          (
+            count(ALERTS{alertname=~".*ConnectionErrors", alertstate="firing"}) > 0
+          ) and (
+            count(ALERTS{alertname=~".*LockCount", alertstate="firing"}) > 0
+          ) and (
+            count(ALERTS{alertname=~".*QuerySlow", alertstate="firing"}) > 0
+          )
+        for: 3m
+        labels:
+          severity: warning
+          team: sre
+          component: database
+          pattern: "database-stress"
+        annotations:
+          summary: "Database stress pattern detected"
+          description: "Multiple database performance indicators showing issues"
+          impact: "High - Database performance severely degraded"
+          action: "Investigate database load and optimize queries"
+          
+  - name: alert-noise-reduction
+    interval: 60s
+    rules:
+      # ==========================================
+      # Noise Reduction Rules
+      # ==========================================
+      
+      - alert: AlertStorm
+        expr: >
+          count(ALERTS{alertstate="firing"}) > 20
+        for: 1m
+        labels:
+          severity: critical
+          team: sre
+          component: alerting
+          alert_storm: "true"
+        annotations:
+          summary: "Alert storm detected - {{ $value }} active alerts"
+          description: "Excessive number of active alerts may indicate widespread issue"
+          impact: "Critical - Alert fatigue, difficult to prioritize"
+          action: "Focus on critical alerts first, investigate common root cause"
+          
+      - alert: FlappingAlert
+        expr: >
+          changes(ALERTS{alertstate="firing"}[30m]) > 4
+        for: 0m
+        labels:
+          severity: warning
+          team: sre
+          component: alerting
+          flapping: "true"
+        annotations:
+          summary: "Flapping alert detected: {{ $labels.alertname }}"
+          description: "Alert has changed state more than 4 times in 30 minutes"
+          impact: "Medium - Alert noise, investigation needed"
+          action: "Review alert thresholds and add hysteresis"
+          
+  - name: alert-business-context
+    interval: 300s
+    rules:
+      # ==========================================
+      # Business Context Aware Alerts
+      # ==========================================
+      
+      - alert: HighImpactDuringPeak
+        expr: >
+          ON() (hour() >= 9 AND hour() <= 17) * (
+            (
+              count(ALERTS{severity="critical", alertstate="firing"}) > 0
+            ) and (
+              rate(ai_ninja_calls_total[5m]) > 1.0
+            )
+          )
+        for: 1m
+        labels:
+          severity: critical
+          team: sre
+          component: business-impact
+          business_hours: "peak"
+          escalation_required: "true"
+        annotations:
+          summary: "Critical issues during peak business hours"
+          description: "Critical alerts active during high-traffic period"
+          impact: "Maximum - Revenue and customer experience severely affected"
+          action: "Emergency response required - all hands on deck"
+          
+      - alert: WeekendIssue
+        expr: >
+          ON() (day_of_week() == 0 OR day_of_week() == 6) * (
+            count(ALERTS{severity="critical", alertstate="firing"}) > 0
+          )
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+          component: business-impact
+          weekend: "true"
+        annotations:
+          summary: "Critical issues detected during weekend"
+          description: "Critical problems outside normal business hours"
+          impact: "Medium - Limited staff availability"
+          action: "Assess if immediate intervention needed or can wait until Monday"
+          
+  - name: alert-auto-resolution
+    interval: 60s
+    rules:
+      # ==========================================
+      # Auto-Resolution Detection
+      # ==========================================
+      
+      - alert: AlertAutoResolved
+        expr: >
+          (
+            ALERTS{alertstate="firing"} offset 5m
+          ) unless (
+            ALERTS{alertstate="firing"}
+          )
+        for: 0m
+        labels:
+          severity: info
+          team: sre
+          component: resolution
+          auto_resolved: "true"
+        annotations:
+          summary: "Alert {{ $labels.alertname }} auto-resolved"
+          description: "Previously firing alert has resolved automatically"
+          impact: "Positive - Issue resolved without intervention"
+          action: "Document resolution pattern for future reference"

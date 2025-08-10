@@ -1,0 +1,597 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "AI Answer Ninja - Real-time Operations Center",
+    "tags": ["ai-ninja", "operations", "real-time", "sre"],
+    "style": "dark",
+    "timezone": "browser",
+    "editable": true,
+    "hideControls": false,
+    "graphTooltip": 0,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h"]
+    },
+    "refresh": "10s",
+    "schemaVersion": 16,
+    "version": 1,
+    "links": [
+      {
+        "icon": "external link",
+        "title": "Executive Dashboard",
+        "url": "/d/executive-overview",
+        "targetBlank": true
+      },
+      {
+        "icon": "external link", 
+        "title": "Alert Manager",
+        "url": "http://alertmanager:9093",
+        "targetBlank": true
+      }
+    ],
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active Incidents",
+        "type": "table",
+        "gridPos": {
+          "h": 6,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "ALERTS{alertstate=\"firing\"}",
+            "refId": "A",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "transform": "table",
+        "columns": [
+          {
+            "text": "Alert",
+            "value": "alertname"
+          },
+          {
+            "text": "Severity",
+            "value": "severity"
+          },
+          {
+            "text": "Service",
+            "value": "job"
+          },
+          {
+            "text": "Instance",
+            "value": "instance"
+          },
+          {
+            "text": "Description",
+            "value": "description"
+          },
+          {
+            "text": "Started",
+            "value": "__name__"
+          }
+        ],
+        "styles": [
+          {
+            "alias": "Severity",
+            "colorMode": "cell",
+            "colors": ["#299c46", "#e6c441", "#d44a3a"],
+            "pattern": "severity",
+            "thresholds": ["0", "1"],
+            "type": "string",
+            "valueMaps": [
+              {"text": "INFO", "value": "info"},
+              {"text": "WARNING", "value": "warning"},
+              {"text": "CRITICAL", "value": "critical"}
+            ]
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Live Call Processing",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 6
+        },
+        "targets": [
+          {
+            "expr": "sum(ai_ninja_active_calls)",
+            "refId": "A",
+            "legendFormat": "Active Calls"
+          },
+          {
+            "expr": "sum(rate(ai_ninja_calls_total[1m])) * 60",
+            "refId": "B",
+            "legendFormat": "Calls/min"
+          },
+          {
+            "expr": "sum(ai_ninja_queue_length)",
+            "refId": "C",
+            "legendFormat": "Queue Length"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Count",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        },
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [50],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "model": {
+                  "expr": "sum(ai_ninja_queue_length)",
+                  "refId": "C"
+                },
+                "params": ["C", "5m", "now"]
+              },
+              "reducer": {
+                "params": [],
+                "type": "avg"
+              },
+              "type": "query"
+            }
+          ],
+          "executionErrorState": "alerting",
+          "frequency": "10s",
+          "handler": 1,
+          "name": "High Queue Length Alert",
+          "noDataState": "no_data",
+          "notifications": []
+        }
+      },
+      {
+        "id": 3,
+        "title": "Response Time Heat Map",
+        "type": "heatmap",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 6
+        },
+        "targets": [
+          {
+            "expr": "sum(increase(ai_response_latency_seconds_bucket[2m])) by (le)",
+            "refId": "A",
+            "format": "heatmap",
+            "legendFormat": "{{le}}"
+          }
+        ],
+        "heatmap": {
+          "hideZeroBuckets": false,
+          "highlightCards": true,
+          "highlightInSeries": false
+        },
+        "color": {
+          "cardColor": "#b4ff00",
+          "colorScale": "sqrt",
+          "colorScheme": "interpolateSpectral",
+          "exponent": 0.5,
+          "mode": "spectrum"
+        },
+        "legend": {
+          "show": true
+        },
+        "dataFormat": "tsbuckets",
+        "reverseYBuckets": false,
+        "tooltip": {
+          "show": true,
+          "showHistogram": false
+        },
+        "xBucketSize": null,
+        "xBucketNumber": null,
+        "yBucketSize": null,
+        "yBucketNumber": null
+      },
+      {
+        "id": 4,
+        "title": "Service Performance Matrix",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 0,
+          "y": 14
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job))",
+            "refId": "A",
+            "legendFormat": "{{job}} P95"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Response Time (seconds)",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true,
+          "rightSide": true
+        }
+      },
+      {
+        "id": 5,
+        "title": "Error Rate by Service",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 8,
+          "y": 14
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) by (job) / sum(rate(http_requests_total[5m])) by (job) * 100",
+            "refId": "A",
+            "legendFormat": "{{job}} Error Rate"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Error Rate (%)",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true,
+          "rightSide": true
+        },
+        "thresholds": [
+          {
+            "value": 1.0,
+            "colorMode": "critical",
+            "op": "gt",
+            "fill": true,
+            "line": true,
+            "yaxis": "left"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Resource Utilization",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 16,
+          "y": 14
+        },
+        "targets": [
+          {
+            "expr": "avg(100 - (avg by(instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100))",
+            "refId": "A",
+            "legendFormat": "CPU Usage %"
+          },
+          {
+            "expr": "avg((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100)",
+            "refId": "B",
+            "legendFormat": "Memory Usage %"
+          },
+          {
+            "expr": "avg((1 - node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"}) * 100)",
+            "refId": "C",
+            "legendFormat": "Disk Usage %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage",
+            "logBase": 1,
+            "max": 100,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        },
+        "thresholds": [
+          {
+            "value": 80.0,
+            "colorMode": "critical",
+            "op": "gt",
+            "fill": true,
+            "line": true,
+            "yaxis": "left"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Database Performance",
+        "type": "graph",
+        "gridPos": {
+          "h": 6,
+          "w": 12,
+          "x": 0,
+          "y": 22
+        },
+        "targets": [
+          {
+            "expr": "pg_stat_database_numbackends{datname=\"ai_ninja\"}",
+            "refId": "A",
+            "legendFormat": "Active Connections"
+          },
+          {
+            "expr": "rate(pg_stat_database_tup_fetched{datname=\"ai_ninja\"}[5m])",
+            "refId": "B",
+            "legendFormat": "Tuples Fetched/sec"
+          },
+          {
+            "expr": "pg_locks_count{datname=\"ai_ninja\", mode=\"AccessExclusiveLock\"}",
+            "refId": "C",
+            "legendFormat": "Exclusive Locks"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Count/Rate",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        }
+      },
+      {
+        "id": 8,
+        "title": "Redis Cache Performance",
+        "type": "graph",
+        "gridPos": {
+          "h": 6,
+          "w": 12,
+          "x": 12,
+          "y": 22
+        },
+        "targets": [
+          {
+            "expr": "redis_connected_clients",
+            "refId": "A",
+            "legendFormat": "Connected Clients"
+          },
+          {
+            "expr": "rate(redis_commands_processed_total[5m])",
+            "refId": "B",
+            "legendFormat": "Commands/sec"
+          },
+          {
+            "expr": "redis_memory_used_bytes / 1024 / 1024",
+            "refId": "C",
+            "legendFormat": "Memory Used (MB)"
+          },
+          {
+            "expr": "rate(redis_keyspace_hits_total[5m]) / (rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m])) * 100",
+            "refId": "D",
+            "legendFormat": "Cache Hit Rate %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Count/MB/%",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        }
+      },
+      {
+        "id": 9,
+        "title": "AI Pipeline Latency Breakdown",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 28
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_component_latency_seconds_bucket{component=\"stt\"}[5m]))",
+            "refId": "A",
+            "legendFormat": "STT P95"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_component_latency_seconds_bucket{component=\"intent_recognition\"}[5m]))",
+            "refId": "B",
+            "legendFormat": "Intent Recognition P95"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_component_latency_seconds_bucket{component=\"ai_generation\"}[5m]))",
+            "refId": "C",
+            "legendFormat": "AI Generation P95"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_component_latency_seconds_bucket{component=\"tts\"}[5m]))",
+            "refId": "D",
+            "legendFormat": "TTS P95"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_response_latency_seconds_bucket[5m]))",
+            "refId": "E",
+            "legendFormat": "Total Pipeline P95"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Latency (seconds)",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true,
+          "min": true
+        },
+        "tooltip": {
+          "value_type": "individual",
+          "shared": true,
+          "sort": 2
+        },
+        "thresholds": [
+          {
+            "value": 1.5,
+            "colorMode": "critical",
+            "op": "gt",
+            "fill": true,
+            "line": true,
+            "yaxis": "left"
+          }
+        ]
+      }
+    ],
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": "-- Grafana --",
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        },
+        {
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "ALERTS{alertname!=\"\", severity=\"critical\"}",
+          "iconColor": "#e24d42",
+          "name": "Critical Alerts",
+          "showIn": 0,
+          "step": "60s",
+          "titleFormat": "Critical: {{alertname}}",
+          "type": "tags"
+        },
+        {
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "changes(up[1h]) > 0",
+          "iconColor": "#1f77b4",
+          "name": "Service Restarts",
+          "showIn": 0,
+          "step": "60s",
+          "titleFormat": "Restart: {{job}}",
+          "type": "tags"
+        }
+      ]
+    },
+    "templating": {
+      "list": [
+        {
+          "allValue": null,
+          "current": {
+            "text": "production",
+            "value": "production"
+          },
+          "datasource": "Prometheus",
+          "definition": "label_values(up, environment)",
+          "hide": 0,
+          "includeAll": false,
+          "label": "Environment",
+          "multi": false,
+          "name": "environment",
+          "options": [],
+          "query": "label_values(up, environment)",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 0,
+          "type": "query"
+        }
+      ]
+    }
+  }
+}

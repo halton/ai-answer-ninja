@@ -1,0 +1,344 @@
+groups:
+  - name: ai-business-critical
+    interval: 30s
+    rules:
+      # ==========================================
+      # Critical Business Metrics
+      # ==========================================
+      - alert: CallSuccessRateLow
+        expr: >
+          (
+            rate(ai_ninja_calls_successful[10m]) / 
+            rate(ai_ninja_calls_total[10m])
+          ) * 100 < 95
+        for: 5m
+        labels:
+          severity: critical
+          team: sre
+          component: business
+          sla_impact: "true"
+        annotations:
+          summary: "Call success rate dropped below 95%"
+          description: "Current success rate is {{ $value | humanizePercentage }}, target is 95%"
+          impact: "Critical - SLA violation, customer satisfaction at risk"
+          action: "Check AI services, network connectivity, and call routing"
+          business_impact: "Direct revenue impact - customers unable to use service effectively"
+          escalation_required: "true"
+          
+      - alert: CallSuccessRateCritical
+        expr: >
+          (
+            rate(ai_ninja_calls_successful[5m]) / 
+            rate(ai_ninja_calls_total[5m])
+          ) * 100 < 90
+        for: 2m
+        labels:
+          severity: critical
+          team: sre
+          component: business
+          paging_required: "true"
+          sla_impact: "true"
+        annotations:
+          summary: "CRITICAL: Call success rate below 90%"
+          description: "Success rate is {{ $value | humanizePercentage }} - immediate action required"
+          impact: "Critical - Major service degradation"
+          action: "Emergency response - check all core services immediately"
+          business_impact: "Severe revenue impact - service effectively unusable"
+          escalation_required: "true"
+          
+      - alert: AIResponseLatencyHigh
+        expr: >
+          histogram_quantile(0.95, 
+            rate(ai_response_latency_seconds_bucket[5m])
+          ) > 1.5
+        for: 3m
+        labels:
+          severity: warning
+          team: ai-team
+          component: ai-performance
+        annotations:
+          summary: "AI response latency is high"
+          description: "95th percentile response time is {{ $value }}s (target: <1.5s)"
+          impact: "Medium - User experience degraded"
+          action: "Check AI pipeline components: STT, intent recognition, generation, TTS"
+          optimization_required: "true"
+          
+      - alert: AIResponseLatencyCritical
+        expr: >
+          histogram_quantile(0.95, 
+            rate(ai_response_latency_seconds_bucket[5m])
+          ) > 3.0
+        for: 1m
+        labels:
+          severity: critical
+          team: ai-team
+          component: ai-performance
+          sla_impact: "true"
+        annotations:
+          summary: "CRITICAL: AI response latency exceeds 3 seconds"
+          description: "95th percentile response time is {{ $value }}s - SLA violation"
+          impact: "Critical - Unacceptable user experience"
+          action: "Emergency investigation of AI pipeline bottlenecks"
+          business_impact: "Customer churn risk due to poor performance"
+          
+      # ==========================================
+      # AI Quality Metrics
+      # ==========================================
+      - alert: STTAccuracyLow
+        expr: >
+          avg_over_time(ai_ninja_stt_accuracy_rate[30m]) < 0.90
+        for: 10m
+        labels:
+          severity: warning
+          team: ai-team
+          component: speech-recognition
+        annotations:
+          summary: "Speech-to-text accuracy below threshold"
+          description: "STT accuracy is {{ $value | humanizePercentage }}, target is >90%"
+          impact: "Medium - AI responses may be incorrect"
+          action: "Check Azure Speech Service health and audio quality"
+          data_quality_impact: "true"
+          
+      - alert: SpamDetectionAccuracyLow
+        expr: >
+          avg_over_time(ai_ninja_spam_detection_accuracy[1h]) < 0.85
+        for: 15m
+        labels:
+          severity: warning
+          team: ai-team
+          component: spam-detection
+        annotations:
+          summary: "Spam detection accuracy degraded"
+          description: "Spam detection accuracy is {{ $value | humanizePercentage }}, target is >85%"
+          impact: "Medium - More spam calls may reach users"
+          action: "Review spam detection model and recent data patterns"
+          ml_model_review: "required"
+          
+      - alert: FalsePositiveRateHigh
+        expr: >
+          avg_over_time(ai_ninja_false_positive_rate[2h]) > 0.05
+        for: 20m
+        labels:
+          severity: critical
+          team: ai-team
+          component: spam-detection
+        annotations:
+          summary: "High false positive rate in spam detection"
+          description: "False positive rate is {{ $value | humanizePercentage }}, target is <5%"
+          impact: "Critical - Legitimate calls being blocked"
+          action: "Immediate model review and tuning required"
+          customer_impact: "Legitimate callers cannot reach users"
+          
+      # ==========================================
+      # User Experience Metrics
+      # ==========================================
+      - alert: CallerSatisfactionLow
+        expr: >
+          avg_over_time(ai_ninja_caller_satisfaction_score[4h]) < 0.70
+        for: 30m
+        labels:
+          severity: warning
+          team: product
+          component: user-experience
+        annotations:
+          summary: "Caller satisfaction score is low"
+          description: "Average satisfaction score is {{ $value | humanizePercentage }}, target is >70%"
+          impact: "Medium - User experience degrading"
+          action: "Review recent calls and AI response quality"
+          user_feedback_analysis: "required"
+          
+      - alert: ConversationLengthHigh
+        expr: >
+          histogram_quantile(0.90, 
+            rate(ai_ninja_conversation_turns_bucket[30m])
+          ) > 8
+        for: 15m
+        labels:
+          severity: warning
+          team: ai-team
+          component: conversation-management
+        annotations:
+          summary: "Conversations taking too many turns"
+          description: "90th percentile conversation length is {{ $value }} turns (target: <8)"
+          impact: "Medium - AI not terminating calls efficiently"
+          action: "Review termination logic and conversation patterns"
+          efficiency_impact: "true"
+          
+      # ==========================================
+      # Business Volume Metrics
+      # ==========================================
+      - alert: CallVolumeSpike
+        expr: >
+          (
+            rate(ai_ninja_calls_total[5m]) >
+            (avg_over_time(rate(ai_ninja_calls_total[5m])[1h:5m]) * 2)
+          ) and (
+            rate(ai_ninja_calls_total[5m]) > 0.5
+          )
+        for: 2m
+        labels:
+          severity: warning
+          team: sre
+          component: capacity
+        annotations:
+          summary: "Unusual spike in call volume"
+          description: "Current call rate {{ $value }}/sec is 2x higher than hourly average"
+          impact: "Medium - May need capacity scaling"
+          action: "Monitor system resources and consider auto-scaling"
+          capacity_planning: "required"
+          
+      - alert: CallVolumeDrop
+        expr: >
+          (
+            rate(ai_ninja_calls_total[10m]) <
+            (avg_over_time(rate(ai_ninja_calls_total[10m])[2h:10m]) * 0.3)
+          ) and (
+            avg_over_time(rate(ai_ninja_calls_total[10m])[2h:10m]) > 0.1
+          )
+        for: 10m
+        labels:
+          severity: warning
+          team: sre
+          component: business
+        annotations:
+          summary: "Significant drop in call volume"
+          description: "Call rate {{ $value }}/sec is 70% below 2-hour average"
+          impact: "Medium - Potential service disruption or external issues"
+          action: "Check service availability and external factors"
+          business_continuity: "investigate"
+          
+      - alert: NewUserRegistrationDrop
+        expr: >
+          rate(ai_ninja_new_users_total[2h]) < 
+          (avg_over_time(rate(ai_ninja_new_users_total[2h])[24h:2h]) * 0.5)
+        for: 1h
+        labels:
+          severity: warning
+          team: growth
+          component: acquisition
+        annotations:
+          summary: "New user registration rate dropped significantly"
+          description: "Registration rate is {{ $value }}/hour, 50% below daily average"
+          impact: "Medium - Growth metrics affected"
+          action: "Check registration flow and marketing campaigns"
+          growth_impact: "true"
+          
+  - name: ai-business-sla
+    interval: 60s
+    rules:
+      # ==========================================
+      # SLA Monitoring
+      # ==========================================
+      - alert: MonthlyUptimeBelowSLA
+        expr: >
+          (
+            (
+              avg_over_time(up{job=~"phone-gateway|realtime-processor|conversation-engine"}[30d]) * 100
+            ) < 99.5
+          ) and (
+            day_of_month() > 15
+          )
+        for: 5m
+        labels:
+          severity: critical
+          team: sre
+          component: sla
+          escalation_required: "true"
+        annotations:
+          summary: "Monthly uptime SLA at risk"
+          description: "Current month uptime is {{ $value | humanizePercentage }}, SLA requires 99.5%"
+          impact: "Critical - SLA violation potential"
+          action: "Implement additional reliability measures immediately"
+          business_impact: "Financial penalties and customer contract violations"
+          
+      - alert: WeeklyErrorBudgetExhausted
+        expr: >
+          (
+            (
+              1 - (
+                sum(rate(http_requests_total{status!~"5.."}[7d])) /
+                sum(rate(http_requests_total[7d]))
+              )
+            ) * 100 > 0.5
+          )
+        for: 10m
+        labels:
+          severity: critical
+          team: sre
+          component: sla
+          error_budget: "exhausted"
+        annotations:
+          summary: "Weekly error budget exhausted"
+          description: "Error rate {{ $value | humanizePercentage }} exceeds 0.5% weekly budget"
+          impact: "Critical - No more errors allowed this week"
+          action: "Stop all risky deployments and focus on stability"
+          deployment_freeze: "recommended"
+          
+  - name: ai-business-trending
+    interval: 300s  # 5 minutes
+    rules:
+      # ==========================================
+      # Trend Analysis Alerts
+      # ==========================================
+      - alert: CallSuccessRateTrending
+        expr: >
+          (
+            (
+              rate(ai_ninja_calls_successful[1h]) / rate(ai_ninja_calls_total[1h])
+            ) - (
+              rate(ai_ninja_calls_successful[1h] offset 24h) / rate(ai_ninja_calls_total[1h] offset 24h)
+            )
+          ) * 100 < -2
+        for: 30m
+        labels:
+          severity: warning
+          team: sre
+          component: trending
+        annotations:
+          summary: "Call success rate trending downward"
+          description: "Success rate decreased {{ $value | humanizePercentage }} compared to 24h ago"
+          impact: "Medium - Quality degradation trend detected"
+          action: "Investigate root cause of declining success rate"
+          trend_analysis: "required"
+          
+      - alert: ResponseTimesTrendingUp
+        expr: >
+          (
+            histogram_quantile(0.95, rate(ai_response_latency_seconds_bucket[2h])) -
+            histogram_quantile(0.95, rate(ai_response_latency_seconds_bucket[2h] offset 24h))
+          ) > 0.3
+        for: 1h
+        labels:
+          severity: warning
+          team: ai-team
+          component: performance-trending
+        annotations:
+          summary: "AI response times trending upward"
+          description: "P95 latency increased {{ $value }}s compared to 24h ago"
+          impact: "Medium - Performance degradation trend"
+          action: "Investigate performance regression causes"
+          performance_analysis: "required"
+          
+  - name: ai-business-seasonal
+    interval: 3600s  # 1 hour
+    rules:
+      # ==========================================
+      # Seasonal and Time-based Alerts
+      # ==========================================
+      - alert: UnexpectedTrafficPattern
+        expr: >
+          abs(
+            rate(ai_ninja_calls_total[1h]) - 
+            avg_over_time(rate(ai_ninja_calls_total[1h])[7d:1h])
+          ) / avg_over_time(rate(ai_ninja_calls_total[1h])[7d:1h]) > 0.5
+        for: 2h
+        labels:
+          severity: info
+          team: sre
+          component: anomaly-detection
+        annotations:
+          summary: "Unexpected traffic pattern detected"
+          description: "Current hourly rate differs by {{ $value | humanizePercentage }} from weekly pattern"
+          impact: "Low - Monitor for capacity needs"
+          action: "Validate if pattern change is expected (marketing, events, etc.)"
+          pattern_analysis: "required"

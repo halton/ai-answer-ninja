@@ -1,0 +1,318 @@
+# Core Services Alerting Rules
+# High-priority alerts for critical business services
+
+groups:
+  - name: ai-ninja.core-services
+    interval: 15s
+    rules:
+      # ===========================================
+      # Service Availability Alerts
+      # ===========================================
+      - alert: ServiceDown
+        expr: up{job=~"phone-gateway|realtime-processor|conversation-engine|profile-analytics"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          category: availability
+          team: platform
+          runbook: https://docs.ai-ninja.com/runbooks/service-down
+        annotations:
+          summary: "Critical service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} on instance {{ $labels.instance }} has been down for more than 30 seconds"
+          impact: "High - Core functionality affected"
+          action: "Immediate investigation required"
+
+      - alert: ServiceDegraded
+        expr: |
+          (
+            rate(http_requests_total{job=~"phone-gateway|realtime-processor|conversation-engine|profile-analytics",code=~"5.."}[5m]) 
+            / 
+            rate(http_requests_total{job=~"phone-gateway|realtime-processor|conversation-engine|profile-analytics"}[5m])
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+          category: availability
+          team: platform
+        annotations:
+          summary: "Service {{ $labels.job }} error rate is high"
+          description: "Service {{ $labels.job }} has error rate above 5% for the last 2 minutes"
+          current_error_rate: "{{ $value | humanizePercentage }}"
+          action: "Monitor and investigate if rate continues to increase"
+
+      # ===========================================
+      # Phone Gateway Specific Alerts
+      # ===========================================
+      - alert: IncomingCallsDropped
+        expr: |
+          rate(ai_ninja_calls_total{status="failed",service="phone-gateway"}[5m]) 
+          / 
+          rate(ai_ninja_calls_total{service="phone-gateway"}[5m]) > 0.10
+        for: 1m
+        labels:
+          severity: critical
+          category: business
+          team: voice
+        annotations:
+          summary: "High call drop rate detected"
+          description: "More than 10% of incoming calls are being dropped in the last 5 minutes"
+          current_drop_rate: "{{ $value | humanizePercentage }}"
+          impact: "Critical - Customers cannot reach AI assistant"
+          action: "Check Azure Communication Services status and phone gateway logs"
+
+      - alert: CallVolumeAnomaly
+        expr: |
+          abs(
+            rate(ai_ninja_calls_total{service="phone-gateway"}[5m]) 
+            - 
+            avg_over_time(rate(ai_ninja_calls_total{service="phone-gateway"}[5m])[1h:5m])
+          ) > 3 * stddev_over_time(rate(ai_ninja_calls_total{service="phone-gateway"}[5m])[1h:5m])
+        for: 3m
+        labels:
+          severity: warning
+          category: anomaly
+          team: voice
+        annotations:
+          summary: "Unusual call volume pattern detected"
+          description: "Call volume is significantly different from normal patterns"
+          current_rate: "{{ rate(ai_ninja_calls_total{service=\"phone-gateway\"}[5m]) }} calls/sec"
+          action: "Monitor for spam attacks or system issues"
+
+      # ===========================================
+      # Real-time Processor Alerts
+      # ===========================================
+      - alert: AIResponseLatencyHigh
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(ai_response_latency_seconds_bucket{service="realtime-processor"}[5m])) by (le)
+          ) > 1.5
+        for: 2m
+        labels:
+          severity: critical
+          category: performance
+          team: ai
+        annotations:
+          summary: "AI response latency is too high"
+          description: "95th percentile of AI response latency is above 1.5 seconds"
+          current_p95: "{{ $value }}s"
+          threshold: "1.5s"
+          impact: "High - Poor user experience"
+          action: "Check Azure OpenAI service status and optimization"
+
+      - alert: STTProcessingFailed
+        expr: |
+          rate(ai_ninja_stt_requests_total{status="failed"}[5m]) 
+          / 
+          rate(ai_ninja_stt_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+          category: ai
+          team: ai
+        annotations:
+          summary: "Speech-to-Text processing failure rate high"
+          description: "More than 5% of STT requests are failing"
+          current_failure_rate: "{{ $value | humanizePercentage }}"
+          action: "Check Azure Speech Service connectivity and quota"
+
+      - alert: TTSProcessingSlow
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(ai_ninja_tts_duration_seconds_bucket[5m])) by (le)
+          ) > 0.3
+        for: 2m
+        labels:
+          severity: warning
+          category: performance
+          team: ai
+        annotations:
+          summary: "Text-to-Speech processing is slow"
+          description: "95th percentile TTS processing time exceeds 300ms"
+          current_p95: "{{ $value }}s"
+          threshold: "0.3s"
+          action: "Monitor Azure TTS service performance"
+
+      # ===========================================
+      # Conversation Engine Alerts
+      # ===========================================
+      - alert: ConversationContextLost
+        expr: |
+          rate(ai_ninja_conversation_context_lost_total[5m]) > 0.1
+        for: 1m
+        labels:
+          severity: warning
+          category: business
+          team: ai
+        annotations:
+          summary: "Conversation context being lost frequently"
+          description: "Context loss rate is above normal thresholds"
+          current_rate: "{{ $value }} context losses/sec"
+          impact: "Medium - Conversation quality degraded"
+          action: "Check Redis connectivity and conversation state management"
+
+      - alert: AIGenerationTimeout
+        expr: |
+          rate(ai_ninja_ai_generation_timeout_total[5m]) > 0.02
+        for: 2m
+        labels:
+          severity: critical
+          category: performance
+          team: ai
+        annotations:
+          summary: "AI response generation timeouts increasing"
+          description: "AI response generation is timing out frequently"
+          current_rate: "{{ $value }} timeouts/sec"
+          action: "Check Azure OpenAI service latency and rate limits"
+
+      # ===========================================
+      # Profile Analytics Alerts
+      # ===========================================
+      - alert: SpamDetectionDown
+        expr: up{job="profile-analytics"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          category: business
+          team: ml
+        annotations:
+          summary: "Spam detection service is down"
+          description: "Profile analytics service responsible for spam detection is unavailable"
+          impact: "Critical - Cannot identify spam calls"
+          action: "Restart profile analytics service immediately"
+
+      - alert: MLModelPredictionFailed
+        expr: |
+          rate(ai_ninja_ml_prediction_errors_total[5m]) 
+          / 
+          rate(ai_ninja_ml_predictions_total[5m]) > 0.10
+        for: 3m
+        labels:
+          severity: warning
+          category: ml
+          team: ml
+        annotations:
+          summary: "ML model prediction failure rate high"
+          description: "More than 10% of ML model predictions are failing"
+          current_failure_rate: "{{ $value | humanizePercentage }}"
+          action: "Check ML model health and feature pipeline"
+
+      # ===========================================
+      # Resource Utilization Alerts
+      # ===========================================
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          category: resource
+          team: platform
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage has been above 80% for more than 5 minutes"
+          current_usage: "{{ $value }}%"
+          action: "Check for resource-intensive processes or scale up"
+
+      - alert: CriticalCPUUsage
+        expr: |
+          100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 95
+        for: 2m
+        labels:
+          severity: critical
+          category: resource
+          team: platform
+        annotations:
+          summary: "Critical CPU usage on {{ $labels.instance }}"
+          description: "CPU usage has been above 95% for more than 2 minutes"
+          current_usage: "{{ $value }}%"
+          impact: "High - Service performance severely degraded"
+          action: "Immediate intervention required - scale up or restart services"
+
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          category: resource
+          team: platform
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage has been above 85% for more than 5 minutes"
+          current_usage: "{{ $value }}%"
+          action: "Check for memory leaks or scale up memory"
+
+      - alert: CriticalMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 95
+        for: 2m
+        labels:
+          severity: critical
+          category: resource
+          team: platform
+        annotations:
+          summary: "Critical memory usage on {{ $labels.instance }}"
+          description: "Memory usage has been above 95% for more than 2 minutes"
+          current_usage: "{{ $value }}%"
+          impact: "Critical - Risk of out-of-memory kills"
+          action: "Immediate memory cleanup or service restart required"
+
+      # ===========================================
+      # Database Alerts
+      # ===========================================
+      - alert: DatabaseConnectionsHigh
+        expr: |
+          pg_stat_database_numbackends / pg_settings_max_connections * 100 > 80
+        for: 3m
+        labels:
+          severity: warning
+          category: database
+          team: platform
+        annotations:
+          summary: "Database connection pool near capacity"
+          description: "More than 80% of available database connections are in use"
+          current_usage: "{{ $value }}%"
+          action: "Check for connection leaks or increase connection pool size"
+
+      - alert: DatabaseQuerySlow
+        expr: |
+          rate(pg_stat_database_tup_fetched[5m]) / rate(pg_stat_database_tup_returned[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+          category: database
+          team: platform
+        annotations:
+          summary: "Database queries performing inefficiently"
+          description: "High ratio of disk fetches to returned rows indicates slow queries"
+          current_ratio: "{{ $value }}"
+          action: "Identify and optimize slow queries"
+
+      # ===========================================
+      # Redis Alerts
+      # ===========================================
+      - alert: RedisConnectionsRejected
+        expr: increase(redis_rejected_connections_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          category: cache
+          team: platform
+        annotations:
+          summary: "Redis rejecting connections"
+          description: "Redis has rejected {{ $value }} connections in the last 5 minutes"
+          action: "Check Redis maxclients setting and connection pool configuration"
+
+      - alert: RedisMemoryHigh
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes * 100 > 80
+        for: 3m
+        labels:
+          severity: warning
+          category: cache
+          team: platform
+        annotations:
+          summary: "Redis memory usage is high"
+          description: "Redis memory usage is above 80%"
+          current_usage: "{{ $value }}%"
+          action: "Clean up expired keys or increase Redis memory limit"

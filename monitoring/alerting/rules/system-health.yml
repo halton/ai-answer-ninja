@@ -1,0 +1,320 @@
+groups:
+  - name: system-health
+    interval: 30s
+    rules:
+      # ==========================================
+      # Critical System Health Alerts
+      # ==========================================
+      - alert: ServiceDown
+        expr: up{job=~"phone-gateway|realtime-processor|conversation-engine|profile-analytics|user-management|smart-whitelist|configuration-service|storage-service|monitoring-service"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: sre
+          component: service
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} on {{ $labels.instance }} has been down for more than 30 seconds"
+          impact: "High - Core functionality may be affected"
+          action: "Check service logs: kubectl logs -l app={{ $labels.job }} -n ai-ninja --tail=100"
+          runbook_url: "https://runbooks.ai-ninja.com/service-down"
+          dashboard_url: "https://grafana.ai-ninja.com/d/real-time-operations"
+          
+      - alert: HighErrorRate
+        expr: >
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m])) by (job) /
+            sum(rate(http_requests_total[5m])) by (job)
+          ) * 100 > 5
+        for: 3m
+        labels:
+          severity: critical
+          team: sre
+          component: application
+        annotations:
+          summary: "High error rate on {{ $labels.job }}"
+          description: "Service {{ $labels.job }} has error rate of {{ $value | humanizePercentage }}"
+          impact: "High - User experience degraded"
+          action: "Check error logs and recent deployments"
+          
+      - alert: ResponseTimeHigh
+        expr: >
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+          component: performance
+        annotations:
+          summary: "High response time on {{ $labels.job }}"
+          description: "95th percentile response time is {{ $value }}s on {{ $labels.job }}"
+          impact: "Medium - Performance degraded"
+          action: "Check system resources and database performance"
+          
+      # ==========================================
+      # Infrastructure Health Alerts
+      # ==========================================
+      - alert: HighCPUUsage
+        expr: >
+          100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+          component: infrastructure
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          impact: "Medium - Performance may degrade"
+          action: "Check top processes: kubectl top pods -n ai-ninja --sort-by=cpu"
+          
+      - alert: CriticalCPUUsage
+        expr: >
+          100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+        for: 2m
+        labels:
+          severity: critical
+          team: sre
+          component: infrastructure
+        annotations:
+          summary: "Critical CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          impact: "Critical - System may become unresponsive"
+          action: "Immediate investigation required - consider scaling up"
+          
+      - alert: HighMemoryUsage
+        expr: >
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+          component: infrastructure
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          impact: "Medium - Risk of OOM kills"
+          action: "Check memory-intensive pods: kubectl top pods -n ai-ninja --sort-by=memory"
+          
+      - alert: CriticalMemoryUsage
+        expr: >
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 95
+        for: 1m
+        labels:
+          severity: critical
+          team: sre
+          component: infrastructure
+        annotations:
+          summary: "Critical memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          impact: "Critical - Imminent risk of OOM kills"
+          action: "Immediate action required - restart memory-heavy services"
+          
+      - alert: HighDiskUsage
+        expr: >
+          (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+          component: infrastructure
+        annotations:
+          summary: "High disk usage on {{ $labels.instance }}"
+          description: "Disk usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          impact: "Medium - Storage capacity issues"
+          action: "Clean up logs: kubectl exec -n ai-ninja -- find /var/log -name '*.log' -mtime +7 -delete"
+          
+      - alert: CriticalDiskUsage
+        expr: >
+          (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 > 90
+        for: 1m
+        labels:
+          severity: critical
+          team: sre
+          component: infrastructure
+        annotations:
+          summary: "Critical disk usage on {{ $labels.instance }}"
+          description: "Disk usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          impact: "Critical - System may fail due to no disk space"
+          action: "Emergency cleanup required immediately"
+          
+      # ==========================================
+      # Pod and Container Health
+      # ==========================================
+      - alert: PodCrashLooping
+        expr: >
+          rate(kube_pod_container_status_restarts_total{namespace="ai-ninja"}[15m]) * 60 * 15 > 0
+        for: 0m
+        labels:
+          severity: warning
+          team: sre
+          component: kubernetes
+        annotations:
+          summary: "Pod {{ $labels.pod }} is crash looping"
+          description: "Pod {{ $labels.pod }}/{{ $labels.container }} is restarting frequently"
+          impact: "Medium - Service instability"
+          action: "Check pod logs: kubectl logs {{ $labels.pod }} -c {{ $labels.container }} -n ai-ninja --previous"
+          
+      - alert: PodPending
+        expr: >
+          kube_pod_status_phase{namespace="ai-ninja", phase="Pending"} == 1
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+          component: kubernetes
+        annotations:
+          summary: "Pod {{ $labels.pod }} stuck in Pending state"
+          description: "Pod {{ $labels.pod }} has been pending for more than 5 minutes"
+          impact: "Medium - Service may be unavailable"
+          action: "Check node resources and pod events: kubectl describe pod {{ $labels.pod }} -n ai-ninja"
+          
+      - alert: PodOOMKilled
+        expr: >
+          increase(kube_pod_container_status_restarts_total{namespace="ai-ninja"}[10m]) > 0 
+          and ignoring(reason) 
+          kube_pod_container_status_last_terminated_reason{namespace="ai-ninja", reason="OOMKilled"} == 1
+        for: 0m
+        labels:
+          severity: critical
+          team: sre
+          component: kubernetes
+        annotations:
+          summary: "Pod {{ $labels.pod }} was OOM killed"
+          description: "Container {{ $labels.container }} in pod {{ $labels.pod }} was killed due to out of memory"
+          impact: "High - Service interrupted, memory limits may be too low"
+          action: "Increase memory limits or optimize application memory usage"
+          
+      # ==========================================
+      # Network and Connectivity
+      # ==========================================
+      - alert: HighNetworkLatency
+        expr: >
+          histogram_quantile(0.99, 
+            sum(rate(prometheus_sd_kubernetes_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 1.0
+        for: 3m
+        labels:
+          severity: warning
+          team: sre
+          component: network
+        annotations:
+          summary: "High network latency detected"
+          description: "99th percentile network latency is {{ $value }}s"
+          impact: "Medium - Service discovery may be slow"
+          action: "Check network connectivity and DNS resolution"
+          
+      - alert: TooManyConnections
+        expr: >
+          node_netstat_Tcp_CurrEstab > 5000
+        for: 2m
+        labels:
+          severity: warning
+          team: sre
+          component: network
+        annotations:
+          summary: "Too many TCP connections on {{ $labels.instance }}"
+          description: "{{ $value }} active TCP connections on {{ $labels.instance }}"
+          impact: "Medium - May hit connection limits"
+          action: "Check for connection leaks: netstat -tuln | wc -l"
+          
+  - name: system-health-predictive
+    interval: 60s
+    rules:
+      # ==========================================
+      # Predictive Alerts
+      # ==========================================
+      - alert: DiskSpaceRunningOut
+        expr: >
+          predict_linear(node_filesystem_free_bytes{mountpoint="/"}[6h], 24 * 3600) < 1073741824
+        for: 1h
+        labels:
+          severity: warning
+          team: sre
+          component: capacity
+        annotations:
+          summary: "Disk space will run out in 24 hours on {{ $labels.instance }}"
+          description: "Based on current usage trends, disk will be full in 24 hours"
+          impact: "High - Proactive action required"
+          action: "Schedule maintenance to clean up disk space"
+          
+      - alert: MemoryLeakDetected
+        expr: >
+          (
+            (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes
+          ) - (
+            (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes offset 1h
+          ) > 0.1
+        for: 30m
+        labels:
+          severity: warning
+          team: development
+          component: application
+        annotations:
+          summary: "Potential memory leak detected on {{ $labels.instance }}"
+          description: "Memory usage increased by {{ $value | humanizePercentage }} in the last hour"
+          impact: "Medium - May lead to OOM conditions"
+          action: "Investigate memory usage patterns in applications"
+          
+  - name: system-health-business-hours
+    interval: 30s
+    rules:
+      # ==========================================
+      # Business Hours Specific Alerts
+      # ==========================================
+      - alert: HighLatencyBusinessHours
+        expr: >
+          ON() (hour() >= 9 AND hour() < 17) * (
+            histogram_quantile(0.95, 
+              sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)
+            ) > 1.5
+          )
+        for: 2m
+        labels:
+          severity: critical
+          team: sre
+          component: performance
+          business_hours: "true"
+        annotations:
+          summary: "High latency during business hours on {{ $labels.job }}"
+          description: "95th percentile response time is {{ $value }}s during business hours"
+          impact: "Critical - Customer experience severely impacted during peak hours"
+          action: "Priority escalation - immediate investigation required"
+          
+  - name: system-health-silence-rules
+    interval: 30s
+    rules:
+      # ==========================================
+      # Dependent Service Alerts (will be inhibited)
+      # ==========================================
+      - alert: DatabaseConnectionErrors
+        expr: >
+          sum(rate(pg_stat_database_conflicts_total[5m])) by (datname) > 0
+        for: 1m
+        labels:
+          severity: warning
+          team: sre
+          component: database
+          depends_on: "postgresql-down"
+        annotations:
+          summary: "Database connection conflicts on {{ $labels.datname }}"
+          description: "Database {{ $labels.datname }} has {{ $value }} conflicts per second"
+          impact: "Medium - Database performance degraded"
+          action: "Check for long-running transactions and locks"
+          
+      - alert: RedisConnectionErrors
+        expr: >
+          redis_connected_clients == 0
+        for: 30s
+        labels:
+          severity: warning
+          team: sre
+          component: cache
+          depends_on: "redis-down"
+        annotations:
+          summary: "Redis has no connected clients"
+          description: "Redis instance has no active connections"
+          impact: "Medium - Caching functionality unavailable"
+          action: "Check Redis connectivity and service status"

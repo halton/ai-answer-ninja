@@ -1,0 +1,71 @@
+{
+  "name": "@ai-ninja/smart-whitelist-service",
+  "version": "1.0.0",
+  "description": "Intelligent whitelist management service with ML capabilities",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "type-check": "tsc --noEmit",
+    "docker:build": "docker build -t smart-whitelist-node .",
+    "docker:run": "docker run -p 3006:3006 smart-whitelist-node"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "pg": "^8.11.3",
+    "redis": "^4.6.8",
+    "zod": "^3.22.4",
+    "winston": "^3.10.0",
+    "dotenv": "^16.3.1",
+    "helmet": "^7.0.0",
+    "cors": "^2.8.5",
+    "express-rate-limit": "^6.10.0",
+    "express-validator": "^7.0.1",
+    "jsonwebtoken": "^9.0.2",
+    "bcrypt": "^5.1.1",
+    "uuid": "^9.0.0",
+    "node-cron": "^3.0.2",
+    "prom-client": "^14.2.0",
+    "compression": "^1.7.4"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.17",
+    "@types/pg": "^8.10.2",
+    "@types/node": "^20.5.0",
+    "@types/cors": "^2.8.13",
+    "@types/helmet": "^4.0.0",
+    "@types/jsonwebtoken": "^9.0.2",
+    "@types/bcrypt": "^5.0.0",
+    "@types/uuid": "^9.0.2",
+    "@types/compression": "^1.7.2",
+    "@types/jest": "^29.5.4",
+    "@types/supertest": "^2.0.12",
+    "typescript": "^5.1.6",
+    "tsx": "^3.12.7",
+    "jest": "^29.6.2",
+    "ts-jest": "^29.1.1",
+    "supertest": "^6.3.3",
+    "eslint": "^8.47.0",
+    "@typescript-eslint/eslint-plugin": "^6.4.0",
+    "@typescript-eslint/parser": "^6.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "keywords": [
+    "ai-answer-ninja",
+    "whitelist",
+    "machine-learning",
+    "spam-detection",
+    "phone-filtering"
+  ],
+  "author": "AI Answer Ninja Team",
+  "license": "PROPRIETARY"
+}

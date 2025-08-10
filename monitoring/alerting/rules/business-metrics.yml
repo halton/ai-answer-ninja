@@ -1,0 +1,304 @@
+# Business Metrics Alerting Rules
+# Business-critical alerts for AI Answer Ninja
+
+groups:
+  - name: ai-ninja.business-metrics
+    interval: 30s
+    rules:
+      # ===========================================
+      # Call Success Rate Alerts
+      # ===========================================
+      - alert: CallSuccessRateDropped
+        expr: |
+          (
+            rate(ai_ninja_calls_total{status="successful"}[10m])
+            /
+            rate(ai_ninja_calls_total[10m])
+          ) < 0.95
+        for: 5m
+        labels:
+          severity: critical
+          category: business-critical
+          team: voice
+          priority: P1
+          impact: revenue
+        annotations:
+          summary: "Call success rate dropped below 95%"
+          description: "Only {{ $value | humanizePercentage }} of calls are completing successfully"
+          threshold: "95%"
+          current_rate: "{{ $value | humanizePercentage }}"
+          business_impact: "High - Customer experience degraded, potential revenue loss"
+          action: "Immediate investigation of call handling pipeline required"
+          escalation: "Escalate to on-call engineer after 10 minutes"
+
+      - alert: CallSuccessRateCritical
+        expr: |
+          (
+            rate(ai_ninja_calls_total{status="successful"}[10m])
+            /
+            rate(ai_ninja_calls_total[10m])
+          ) < 0.80
+        for: 2m
+        labels:
+          severity: critical
+          category: business-critical
+          team: voice
+          priority: P0
+          impact: revenue
+        annotations:
+          summary: "CRITICAL: Call success rate below 80%"
+          description: "Only {{ $value | humanizePercentage }} of calls are completing successfully"
+          business_impact: "Critical - Major service degradation, significant revenue impact"
+          action: "EMERGENCY: All hands on deck - investigate immediately"
+          escalation: "Page on-call manager immediately"
+
+      # ===========================================
+      # AI Performance Business Impact
+      # ===========================================
+      - alert: AIResponseQualityDegraded
+        expr: |
+          avg_over_time(ai_ninja_conversation_satisfaction_score[30m]) < 3.5
+        for: 10m
+        labels:
+          severity: warning
+          category: business
+          team: ai
+          impact: customer-satisfaction
+        annotations:
+          summary: "AI response quality degraded"
+          description: "Average conversation satisfaction score dropped to {{ $value }}/5"
+          threshold: "3.5/5"
+          business_impact: "Medium - Customer satisfaction declining"
+          action: "Review AI model performance and conversation quality"
+
+      - alert: ConversationAbandonmentHigh
+        expr: |
+          rate(ai_ninja_calls_total{status="abandoned"}[15m]) 
+          / 
+          rate(ai_ninja_calls_total[15m]) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          category: business
+          team: ai
+          impact: customer-experience
+        annotations:
+          summary: "High conversation abandonment rate"
+          description: "{{ $value | humanizePercentage }} of callers are hanging up during AI conversation"
+          threshold: "20%"
+          business_impact: "Medium - Poor user experience, potential customer churn"
+          action: "Analyze conversation patterns and AI response effectiveness"
+
+      # ===========================================
+      # Spam Detection Effectiveness
+      # ===========================================
+      - alert: SpamDetectionAccuracyLow
+        expr: |
+          (
+            rate(ai_ninja_spam_detection_correct_total[1h])
+            /
+            rate(ai_ninja_spam_detection_total[1h])
+          ) < 0.90
+        for: 15m
+        labels:
+          severity: warning
+          category: business
+          team: ml
+          impact: effectiveness
+        annotations:
+          summary: "Spam detection accuracy below threshold"
+          description: "Spam detection accuracy is {{ $value | humanizePercentage }}, below 90% target"
+          business_impact: "Medium - Reduced service effectiveness"
+          action: "Review ML model performance and retrain if necessary"
+
+      - alert: FalsePositiveRateHigh
+        expr: |
+          rate(ai_ninja_legitimate_calls_blocked_total[2h]) 
+          / 
+          rate(ai_ninja_calls_total{caller_type="legitimate"}[2h]) > 0.02
+        for: 10m
+        labels:
+          severity: critical
+          category: business-critical
+          team: ml
+          impact: customer-experience
+        annotations:
+          summary: "High false positive rate - legitimate calls blocked"
+          description: "{{ $value | humanizePercentage }} of legitimate calls are being incorrectly blocked"
+          threshold: "2%"
+          business_impact: "High - Legitimate callers cannot reach users"
+          action: "Immediate review of spam detection model and whitelist logic"
+
+      # ===========================================
+      # User Engagement Metrics
+      # ===========================================
+      - alert: DailyActiveUsersDropped
+        expr: |
+          ai_ninja_daily_active_users < 0.85 * ai_ninja_daily_active_users offset 7d
+        for: 30m
+        labels:
+          severity: warning
+          category: business
+          team: product
+          impact: engagement
+        annotations:
+          summary: "Daily active users dropped significantly"
+          description: "DAU is {{ $value }}, down from {{ ai_ninja_daily_active_users offset 7d }} last week"
+          drop_percentage: "{{ (1 - $value / (ai_ninja_daily_active_users offset 7d)) * 100 }}%"
+          business_impact: "Medium - Potential user churn or service issues"
+          action: "Analyze user behavior patterns and service quality"
+
+      - alert: UserRetentionDeclining
+        expr: |
+          avg_over_time(ai_ninja_user_retention_7day[7d]) < 0.70
+        for: 1h
+        labels:
+          severity: warning
+          category: business
+          team: product
+          impact: retention
+        annotations:
+          summary: "7-day user retention declining"
+          description: "7-day user retention is {{ $value | humanizePercentage }}, below 70% target"
+          business_impact: "Medium - Long-term user engagement declining"
+          action: "Review user onboarding flow and service value proposition"
+
+      # ===========================================
+      # Revenue Impact Metrics
+      # ===========================================
+      - alert: SubscriptionChurnRateHigh
+        expr: |
+          rate(ai_ninja_subscription_cancellations_total[24h]) 
+          / 
+          ai_ninja_active_subscriptions > 0.05
+        for: 2h
+        labels:
+          severity: critical
+          category: business-critical
+          team: product
+          impact: revenue
+        annotations:
+          summary: "Subscription churn rate exceeds threshold"
+          description: "Daily churn rate is {{ $value | humanizePercentage }}, above 5% threshold"
+          business_impact: "High - Direct revenue impact"
+          action: "Investigate service quality issues and user feedback"
+          escalation: "Escalate to product management and customer success"
+
+      - alert: ConversionRateDropped
+        expr: |
+          rate(ai_ninja_trial_to_paid_conversions_total[7d]) 
+          / 
+          rate(ai_ninja_trial_signups_total[7d]) < 0.15
+        for: 4h
+        labels:
+          severity: warning
+          category: business
+          team: product
+          impact: revenue
+        annotations:
+          summary: "Trial-to-paid conversion rate dropped"
+          description: "Conversion rate is {{ $value | humanizePercentage }}, below 15% target"
+          business_impact: "Medium - Reduced revenue growth"
+          action: "Analyze trial user experience and conversion funnel"
+
+      # ===========================================
+      # Service Level Objectives (SLO)
+      # ===========================================
+      - alert: SLOBudgetExhausted
+        expr: |
+          (
+            1 - (
+              rate(ai_ninja_calls_total{status="successful"}[30d])
+              /
+              rate(ai_ninja_calls_total[30d])
+            )
+          ) > 0.005  # 99.5% SLO means 0.5% error budget
+        for: 1h
+        labels:
+          severity: critical
+          category: slo
+          team: platform
+          impact: slo-breach
+        annotations:
+          summary: "SLO error budget exhausted"
+          description: "30-day error rate is {{ $value | humanizePercentage }}, exceeding 0.5% error budget"
+          slo_target: "99.5%"
+          business_impact: "Critical - SLA breach risk"
+          action: "Implement emergency measures to restore service reliability"
+
+      - alert: SLOBudgetWarning
+        expr: |
+          (
+            1 - (
+              rate(ai_ninja_calls_total{status="successful"}[30d])
+              /
+              rate(ai_ninja_calls_total[30d])
+            )
+          ) > 0.0025  # 50% of error budget consumed
+        for: 2h
+        labels:
+          severity: warning
+          category: slo
+          team: platform
+          impact: slo-risk
+        annotations:
+          summary: "SLO error budget 50% consumed"
+          description: "30-day error rate is {{ $value | humanizePercentage }}, consuming 50% of error budget"
+          remaining_budget: "{{ (0.005 - $value) | humanizePercentage }}"
+          action: "Review recent changes and optimize service reliability"
+
+      # ===========================================
+      # Peak Time Performance
+      # ===========================================
+      - alert: PeakHourDegradation
+        expr: |
+          (
+            histogram_quantile(0.95, 
+              sum(rate(ai_response_latency_seconds_bucket[5m])) by (le)
+            )
+            during_business_hours
+          ) > 1.2
+        for: 5m
+        labels:
+          severity: warning
+          category: business
+          team: platform
+          impact: peak-performance
+        annotations:
+          summary: "Service degradation during peak hours"
+          description: "P95 response latency is {{ $value }}s during business hours"
+          business_impact: "Medium - Poor experience during high-traffic periods"
+          action: "Scale up resources or optimize performance for peak load"
+
+      # ===========================================
+      # Customer Support Metrics
+      # ===========================================
+      - alert: SupportTicketsHigh
+        expr: |
+          increase(ai_ninja_support_tickets_total{category="service_issue"}[4h]) > 10
+        for: 1h
+        labels:
+          severity: warning
+          category: business
+          team: support
+          impact: customer-experience
+        annotations:
+          summary: "High volume of service-related support tickets"
+          description: "{{ $value }} service issue tickets created in last 4 hours"
+          business_impact: "Medium - Customer dissatisfaction increasing"
+          action: "Investigate common issues and proactive communication"
+
+      - alert: EscalatedIssuesHigh
+        expr: |
+          increase(ai_ninja_support_tickets_total{priority="high"}[2h]) > 5
+        for: 30m
+        labels:
+          severity: critical
+          category: business
+          team: support
+          impact: customer-experience
+        annotations:
+          summary: "High number of escalated support issues"
+          description: "{{ $value }} high-priority tickets in last 2 hours"
+          business_impact: "High - Critical customer issues require immediate attention"
+          action: "Review and prioritize high-priority tickets immediately"

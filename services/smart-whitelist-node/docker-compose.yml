@@ -1,0 +1,174 @@
+version: '3.8'
+
+services:
+  smart-whitelist:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: smart-whitelist-service
+    restart: unless-stopped
+    ports:
+      - "3006:3006"
+    environment:
+      - NODE_ENV=development
+      - PORT=3006
+      - HOST=0.0.0.0
+      
+      # Database
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=ai_answer_ninja
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_SSL=false
+      - DB_POOL_MIN=5
+      - DB_POOL_MAX=20
+      
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=1
+      
+      # Cache TTL (seconds)
+      - CACHE_TTL_WHITELIST=600
+      - CACHE_TTL_SPAM_PROFILE=7200
+      - CACHE_TTL_USER_CONFIG=1800
+      - CACHE_TTL_ML_FEATURES=3600
+      
+      # ML Configuration
+      - ML_ENABLED=true
+      - ML_CONFIDENCE_THRESHOLD=0.7
+      - ML_AUTO_LEARN_THRESHOLD=0.85
+      - ML_FEATURE_WORKERS=4
+      - ML_LEARNING_QUEUE_SIZE=1000
+      
+      # Security
+      - JWT_SECRET=your-jwt-secret-change-in-production
+      - JWT_EXPIRES_IN=1h
+      - RATE_LIMIT_WINDOW=900000
+      - RATE_LIMIT_MAX=100
+      
+      # Performance
+      - REQUEST_TIMEOUT=10000
+      - SHUTDOWN_TIMEOUT=30000
+      
+      # Monitoring
+      - METRICS_ENABLED=true
+      - HEALTH_CHECK_INTERVAL=30000
+      
+      # Logging
+      - LOG_LEVEL=info
+      - LOG_FILE_ENABLED=true
+      - LOG_FILE_PATH=/app/logs/smart-whitelist.log
+      
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - ai-ninja-network
+    labels:
+      - "ai-ninja.service=smart-whitelist"
+      - "ai-ninja.version=1.0.0"
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: smart-whitelist-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=ai_answer_ninja
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../database/schemas:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - ai-ninja-network
+    labels:
+      - "ai-ninja.service=postgres"
+
+  redis:
+    image: redis:7-alpine
+    container_name: smart-whitelist-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 60
+      --timeout 0
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - ai-ninja-network
+    labels:
+      - "ai-ninja.service=redis"
+
+  # Optional: Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: smart-whitelist-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - ai-ninja-network
+    profiles:
+      - monitoring
+    labels:
+      - "ai-ninja.service=prometheus"
+
+  # Optional: Grafana for metrics visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: smart-whitelist-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-dashboards:/etc/grafana/provisioning/dashboards
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - ai-ninja-network
+    profiles:
+      - monitoring
+    labels:
+      - "ai-ninja.service=grafana"
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  ai-ninja-network:
+    driver: bridge
+    name: ai-ninja-network

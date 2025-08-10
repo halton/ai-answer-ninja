@@ -1,12 +1,14 @@
 {
   "name": "realtime-processor",
-  "version": "1.0.0",
-  "description": "Real-time audio processing service for AI Answer Ninja",
+  "version": "2.0.0",
+  "description": "Enhanced real-time communication service with WebRTC, advanced audio processing, and performance optimization for AI Answer Ninja",
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
+    "start:enhanced": "node dist/enhancedServer.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "dev:enhanced": "ts-node-dev --respawn --transpile-only src/enhancedServer.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:communication": "node test-service-communication.js",

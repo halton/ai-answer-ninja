@@ -1,0 +1,538 @@
+version: '3.8'
+
+networks:
+  monitoring:
+    name: ai-ninja-monitoring
+    driver: bridge
+  ai-ninja:
+    name: ai-ninja
+    external: true
+
+volumes:
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  alertmanager-data:
+    driver: local
+  jaeger-data:
+    driver: local
+  elasticsearch-data:
+    driver: local
+
+services:
+  # ==========================================
+  # Metrics Collection
+  # ==========================================
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: ai-ninja-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--storage.tsdb.retention.size=10GB'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.external-url=http://localhost:9090'
+      - '--web.enable-admin-api'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerting/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "ai.ninja.service=prometheus"
+      - "ai.ninja.component=monitoring"
+
+  alertmanager:
+    image: prom/alertmanager:v0.25.0
+    container_name: ai-ninja-alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+      - '--web.route-prefix=/'
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "ai.ninja.service=alertmanager"
+      - "ai.ninja.component=monitoring"
+
+  pushgateway:
+    image: prom/pushgateway:v1.6.0
+    container_name: ai-ninja-pushgateway
+    ports:
+      - "9091:9091"
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9091/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "ai.ninja.service=pushgateway"
+      - "ai.ninja.component=monitoring"
+
+  # ==========================================
+  # Visualization
+  # ==========================================
+  grafana:
+    image: grafana/grafana:10.0.3
+    container_name: ai-ninja-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel,grafana-clock-panel
+      - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
+      - GF_SECURITY_ANGULAR_SUPPORT_ENABLED=true
+      - GF_LOG_LEVEL=info
+      - GF_SMTP_ENABLED=true
+      - GF_SMTP_HOST=${SMTP_HOST:-smtp.gmail.com:587}
+      - GF_SMTP_USER=${SMTP_USER:-alerts@company.com}
+      - GF_SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - GF_SMTP_FROM_ADDRESS=${SMTP_FROM:-alerts@company.com}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "ai.ninja.service=grafana"
+      - "ai.ninja.component=monitoring"
+
+  # ==========================================
+  # Distributed Tracing
+  # ==========================================
+  jaeger:
+    image: jaegertracing/all-in-one:1.47.0
+    container_name: ai-ninja-jaeger
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "14268:14268" # HTTP collector
+      - "14250:14250" # gRPC collector
+      - "6831:6831/udp" # UDP collector
+      - "6832:6832/udp" # UDP collector
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+      - SPAN_STORAGE_TYPE=elasticsearch
+      - ES_SERVER_URLS=http://elasticsearch:9200
+      - ES_INDEX_PREFIX=jaeger
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:16686/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      - elasticsearch
+    labels:
+      - "ai.ninja.service=jaeger"
+      - "ai.ninja.component=tracing"
+
+  # ==========================================
+  # Log Aggregation
+  # ==========================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.9.0
+    container_name: ai-ninja-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    labels:
+      - "ai.ninja.service=elasticsearch"
+      - "ai.ninja.component=logging"
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.9.0
+    container_name: ai-ninja-logstash
+    ports:
+      - "5044:5044"
+      - "9600:9600"
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+    environment:
+      - "LS_JAVA_OPTS=-Xmx256m -Xms256m"
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9600/_node/stats || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "ai.ninja.service=logstash"
+      - "ai.ninja.component=logging"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.9.0
+    container_name: ai-ninja-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - SERVER_NAME=kibana
+      - SERVER_HOST=0.0.0.0
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    labels:
+      - "ai.ninja.service=kibana"
+      - "ai.ninja.component=logging"
+
+  # ==========================================
+  # Infrastructure Monitoring
+  # ==========================================
+  node-exporter:
+    image: prom/node-exporter:v1.6.0
+    container_name: ai-ninja-node-exporter
+    command:
+      - '--path.rootfs=/host'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+      - "9100:9100"
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - monitoring
+    restart: unless-stopped
+    pid: host
+    labels:
+      - "ai.ninja.service=node-exporter"
+      - "ai.ninja.component=monitoring"
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.13.1
+    container_name: ai-ninja-postgres-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      - DATA_SOURCE_NAME=postgresql://${POSTGRES_USER:-ai_ninja}:${POSTGRES_PASSWORD:-password}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-ai_ninja}?sslmode=disable
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9187/metrics || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "ai.ninja.service=postgres-exporter"
+      - "ai.ninja.component=monitoring"
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.53.0
+    container_name: ai-ninja-redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9121/metrics || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "ai.ninja.service=redis-exporter"
+      - "ai.ninja.component=monitoring"
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:0.11.0
+    container_name: ai-ninja-nginx-exporter
+    ports:
+      - "9113:9113"
+    command:
+      - -nginx.scrape-uri=http://${NGINX_HOST:-nginx}/nginx_status
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9113/metrics || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "ai.ninja.service=nginx-exporter"
+      - "ai.ninja.component=monitoring"
+
+  # ==========================================
+  # Monitoring Service (Custom)
+  # ==========================================
+  monitoring-service:
+    build:
+      context: ./monitoring-service
+      dockerfile: Dockerfile
+    container_name: ai-ninja-monitoring-service
+    ports:
+      - "3009:3009"
+    environment:
+      - NODE_ENV=production
+      - PORT=3009
+      - LOG_LEVEL=info
+      
+      # Database Configuration
+      - DB_HOST=${POSTGRES_HOST:-postgres}
+      - DB_PORT=${POSTGRES_PORT:-5432}
+      - DB_NAME=${POSTGRES_DB:-ai_ninja}
+      - DB_USER=${POSTGRES_USER:-ai_ninja}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-password}
+      
+      # Redis Configuration
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      
+      # Prometheus Configuration
+      - PROMETHEUS_URL=http://prometheus:9090
+      - PUSHGATEWAY_URL=http://pushgateway:9091
+      
+      # Grafana Configuration
+      - GRAFANA_URL=http://grafana:3000
+      - GRAFANA_API_KEY=${GRAFANA_API_KEY:-}
+      
+      # Notification Configuration
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - EMAIL_SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - EMAIL_SMTP_PORT=${SMTP_PORT:-587}
+      - EMAIL_SMTP_USER=${SMTP_USER:-}
+      - EMAIL_SMTP_PASS=${SMTP_PASSWORD:-}
+      
+      # Azure Monitoring
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:-}
+      - AZURE_SPEECH_ENDPOINT=${AZURE_SPEECH_ENDPOINT:-}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
+      
+      # Feature Toggles
+      - FEATURE_ANOMALY_DETECTION=true
+      - FEATURE_AUTO_REMEDIATION=true
+      - FEATURE_DISTRIBUTED_TRACING=true
+      - FEATURE_LOG_AGGREGATION=true
+    volumes:
+      - ./monitoring-service/logs:/app/logs
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - grafana
+      - elasticsearch
+      - jaeger
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3009/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "ai.ninja.service=monitoring-service"
+      - "ai.ninja.component=monitoring"
+
+  # ==========================================
+  # Uptime Monitoring
+  # ==========================================
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.24.0
+    container_name: ai-ninja-blackbox-exporter
+    ports:
+      - "9115:9115"
+    volumes:
+      - ./blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9115/metrics || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "ai.ninja.service=blackbox-exporter"
+      - "ai.ninja.component=monitoring"
+
+  # ==========================================
+  # Service Discovery and Load Balancing
+  # ==========================================
+  consul:
+    image: consul:1.16.1
+    container_name: ai-ninja-consul
+    ports:
+      - "8500:8500"
+      - "8600:8600/udp"
+    command: agent -server -ui -node=server-1 -bootstrap-expect=1 -client=0.0.0.0
+    volumes:
+      - ./consul:/consul/config:ro
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8500/v1/status/leader || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "ai.ninja.service=consul"
+      - "ai.ninja.component=service-discovery"
+
+  # ==========================================
+  # Performance Testing
+  # ==========================================
+  k6:
+    image: grafana/k6:0.45.1
+    container_name: ai-ninja-k6
+    command: run --out prometheus=http://pushgateway:9091 /scripts/load-test.js
+    volumes:
+      - ./k6:/scripts:ro
+    networks:
+      - monitoring
+      - ai-ninja
+    profiles:
+      - testing
+    depends_on:
+      - pushgateway
+    labels:
+      - "ai.ninja.service=k6"
+      - "ai.ninja.component=testing"
+
+  # ==========================================
+  # Backup and Maintenance
+  # ==========================================
+  backup-service:
+    image: alpine:3.18
+    container_name: ai-ninja-backup-service
+    volumes:
+      - prometheus-data:/backup/prometheus:ro
+      - grafana-data:/backup/grafana:ro
+      - alertmanager-data:/backup/alertmanager:ro
+      - ./backups:/backups
+      - ./scripts/backup.sh:/backup.sh:ro
+    command: sh -c "chmod +x /backup.sh && crond -f"
+    networks:
+      - monitoring
+    restart: unless-stopped
+    profiles:
+      - backup
+    labels:
+      - "ai.ninja.service=backup-service"
+      - "ai.ninja.component=backup"
+
+  # ==========================================
+  # Reverse Proxy for Monitoring Stack
+  # ==========================================
+  monitoring-proxy:
+    image: nginx:1.25-alpine
+    container_name: ai-ninja-monitoring-proxy
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./nginx/monitoring.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    networks:
+      - monitoring
+      - ai-ninja
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - grafana
+      - alertmanager
+      - jaeger
+      - kibana
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "ai.ninja.service=monitoring-proxy"
+      - "ai.ninja.component=proxy"

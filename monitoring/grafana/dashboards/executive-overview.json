@@ -1,0 +1,676 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "AI Answer Ninja - Executive Overview",
+    "tags": ["ai-ninja", "executive", "business"],
+    "style": "dark",
+    "timezone": "browser",
+    "editable": true,
+    "hideControls": false,
+    "graphTooltip": 0,
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+    },
+    "refresh": "30s",
+    "schemaVersion": 16,
+    "version": 1,
+    "links": [
+      {
+        "asDropdown": false,
+        "icon": "external link",
+        "includeVars": true,
+        "keepTime": true,
+        "tags": [],
+        "targetBlank": true,
+        "title": "Technical Dashboard",
+        "tooltip": "",
+        "type": "link",
+        "url": "/d/technical-overview"
+      }
+    ],
+    "panels": [
+      {
+        "id": 1,
+        "title": "System Health Score",
+        "type": "singlestat",
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "min(\n  # Service availability (weight 40%)\n  (avg(up{job=~\"phone-gateway|realtime-processor|conversation-engine\"}) * 100) * 0.4 +\n  # Response time performance (weight 30%)\n  (1 - clamp_max(\n    histogram_quantile(0.95, rate(ai_response_latency_seconds_bucket[5m])) / 2.0, 1\n  )) * 100 * 0.3 +\n  # Call success rate (weight 20%)\n  (rate(ai_ninja_calls_successful[5m]) / rate(ai_ninja_calls_total[5m]) * 100) * 0.2 +\n  # Error rate inverse (weight 10%)\n  (1 - rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m])) * 100 * 0.1\n)",
+            "refId": "A",
+            "intervalFactor": 2
+          }
+        ],
+        "thresholds": "70,85",
+        "colorBackground": true,
+        "colorValue": false,
+        "colors": ["#d44a3a", "#e6c441", "#299c46"],
+        "decimals": 1,
+        "format": "percent",
+        "gauge": {
+          "show": true,
+          "minValue": 0,
+          "maxValue": 100,
+          "thresholdLabels": false,
+          "thresholdMarkers": true
+        },
+        "mappingTypes": [],
+        "mappings": [],
+        "nullPointMode": "connected",
+        "sparkline": {
+          "show": true,
+          "full": false,
+          "lineColor": "rgb(31, 120, 193)",
+          "fillColor": "rgba(31, 118, 189, 0.18)"
+        },
+        "tableColumn": "",
+        "unit": "percent",
+        "valueFontSize": "80%",
+        "valueMaps": [],
+        "valueName": "current"
+      },
+      {
+        "id": 2,
+        "title": "Active Calls",
+        "type": "singlestat",
+        "gridPos": {
+          "h": 4,
+          "w": 3,
+          "x": 6,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum(ai_ninja_active_calls)",
+            "refId": "A"
+          }
+        ],
+        "colorBackground": false,
+        "colorValue": true,
+        "colors": ["#299c46", "#e6c441", "#d44a3a"],
+        "decimals": 0,
+        "format": "short",
+        "mappingTypes": [],
+        "mappings": [],
+        "nullPointMode": "connected",
+        "sparkline": {
+          "show": true,
+          "full": false,
+          "lineColor": "rgb(31, 120, 193)",
+          "fillColor": "rgba(31, 118, 189, 0.18)"
+        },
+        "thresholds": "50,100",
+        "unit": "short",
+        "valueFontSize": "80%",
+        "valueMaps": [],
+        "valueName": "current"
+      },
+      {
+        "id": 3,
+        "title": "Calls Per Hour",
+        "type": "singlestat",
+        "gridPos": {
+          "h": 4,
+          "w": 3,
+          "x": 9,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(ai_ninja_calls_total[1h])) * 3600",
+            "refId": "A"
+          }
+        ],
+        "colorBackground": false,
+        "colorValue": false,
+        "colors": ["#299c46", "#e6c441", "#d44a3a"],
+        "decimals": 0,
+        "format": "short",
+        "sparkline": {
+          "show": true,
+          "full": false,
+          "lineColor": "rgb(31, 120, 193)",
+          "fillColor": "rgba(31, 118, 189, 0.18)"
+        },
+        "unit": "short",
+        "valueFontSize": "80%",
+        "valueName": "current"
+      },
+      {
+        "id": 4,
+        "title": "Success Rate",
+        "type": "singlestat",
+        "gridPos": {
+          "h": 4,
+          "w": 3,
+          "x": 12,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "avg(rate(ai_ninja_calls_successful[5m]) / rate(ai_ninja_calls_total[5m]) * 100)",
+            "refId": "A"
+          }
+        ],
+        "colorBackground": false,
+        "colorValue": true,
+        "colors": ["#d44a3a", "#e6c441", "#299c46"],
+        "decimals": 1,
+        "format": "percent",
+        "sparkline": {
+          "show": true,
+          "full": false,
+          "lineColor": "rgb(31, 120, 193)",
+          "fillColor": "rgba(31, 118, 189, 0.18)"
+        },
+        "thresholds": "95,98",
+        "unit": "percent",
+        "valueFontSize": "80%",
+        "valueName": "current"
+      },
+      {
+        "id": 5,
+        "title": "Blocked Spam Calls",
+        "type": "singlestat",
+        "gridPos": {
+          "h": 4,
+          "w": 3,
+          "x": 15,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum(increase(ai_ninja_spam_blocked_total[24h]))",
+            "refId": "A"
+          }
+        ],
+        "colorBackground": false,
+        "colorValue": false,
+        "colors": ["#299c46", "#e6c441", "#d44a3a"],
+        "decimals": 0,
+        "format": "short",
+        "sparkline": {
+          "show": true,
+          "full": false,
+          "lineColor": "rgb(31, 120, 193)",
+          "fillColor": "rgba(31, 118, 189, 0.18)"
+        },
+        "unit": "short",
+        "valueFontSize": "80%",
+        "valueName": "current"
+      },
+      {
+        "id": 6,
+        "title": "Average Response Time",
+        "type": "singlestat",
+        "gridPos": {
+          "h": 4,
+          "w": 3,
+          "x": 18,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(ai_response_latency_seconds_bucket[5m])) by (le))",
+            "refId": "A"
+          }
+        ],
+        "colorBackground": false,
+        "colorValue": true,
+        "colors": ["#299c46", "#e6c441", "#d44a3a"],
+        "decimals": 2,
+        "format": "s",
+        "sparkline": {
+          "show": true,
+          "full": false,
+          "lineColor": "rgb(31, 120, 193)",
+          "fillColor": "rgba(31, 118, 189, 0.18)"
+        },
+        "thresholds": "1.0,1.5",
+        "unit": "s",
+        "valueFontSize": "80%",
+        "valueName": "current"
+      },
+      {
+        "id": 7,
+        "title": "Cost Efficiency",
+        "type": "singlestat",
+        "gridPos": {
+          "h": 4,
+          "w": 3,
+          "x": 21,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "(\n  sum(rate(ai_ninja_calls_successful[24h]) * 24 * 3600) / \n  (ai_ninja_monthly_cost_dollars / 30)\n) * 100",
+            "refId": "A"
+          }
+        ],
+        "colorBackground": false,
+        "colorValue": true,
+        "colors": ["#d44a3a", "#e6c441", "#299c46"],
+        "decimals": 1,
+        "format": "short",
+        "sparkline": {
+          "show": true,
+          "full": false,
+          "lineColor": "rgb(31, 120, 193)",
+          "fillColor": "rgba(31, 118, 189, 0.18)"
+        },
+        "thresholds": "80,120",
+        "unit": "short",
+        "valueFontSize": "80%",
+        "valueName": "current",
+        "description": "Successful calls per dollar per day"
+      },
+      {
+        "id": 8,
+        "title": "Call Volume Trend (24h)",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 6,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(ai_ninja_calls_total[5m])) * 60",
+            "refId": "A",
+            "legendFormat": "Total Calls/min"
+          },
+          {
+            "expr": "sum(rate(ai_ninja_calls_successful[5m])) * 60",
+            "refId": "B",
+            "legendFormat": "Successful Calls/min"
+          },
+          {
+            "expr": "sum(rate(ai_ninja_spam_blocked_total[5m])) * 60",
+            "refId": "C",
+            "legendFormat": "Spam Blocked/min"
+          }
+        ],
+        "xAxis": {
+          "buckets": null,
+          "mode": "time",
+          "name": null,
+          "show": true,
+          "values": []
+        },
+        "yAxes": [
+          {
+            "label": "Calls per minute",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "points": false,
+        "pointradius": 2,
+        "bars": false,
+        "stack": false,
+        "percentage": false,
+        "legend": {
+          "avg": false,
+          "current": false,
+          "max": false,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": false,
+          "alignAsTable": true,
+          "rightSide": false
+        },
+        "nullPointMode": "null as zero",
+        "steppedLine": false,
+        "tooltip": {
+          "value_type": "individual"
+        },
+        "aliasColors": {
+          "Total Calls/min": "#1f77b4",
+          "Successful Calls/min": "#2ca02c",
+          "Spam Blocked/min": "#ff7f0e"
+        }
+      },
+      {
+        "id": 9,
+        "title": "Response Time Distribution",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 18,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(ai_response_latency_seconds_bucket[5m])) by (le))",
+            "refId": "A",
+            "legendFormat": "P50"
+          },
+          {
+            "expr": "histogram_quantile(0.90, sum(rate(ai_response_latency_seconds_bucket[5m])) by (le))",
+            "refId": "B",
+            "legendFormat": "P90"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(ai_response_latency_seconds_bucket[5m])) by (le))",
+            "refId": "C",
+            "legendFormat": "P95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(ai_response_latency_seconds_bucket[5m])) by (le))",
+            "refId": "D",
+            "legendFormat": "P99"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Response Time (seconds)",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "rightSide": false
+        },
+        "aliasColors": {
+          "P50": "#7eb26d",
+          "P90": "#eab839",
+          "P95": "#ef843c",
+          "P99": "#e24d42"
+        }
+      },
+      {
+        "id": 10,
+        "title": "Service Status Matrix",
+        "type": "table",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "up{job=~\"phone-gateway|realtime-processor|conversation-engine|profile-analytics|user-management|smart-whitelist|configuration-service|storage-service|monitoring-service\"}",
+            "refId": "A",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "transform": "table",
+        "columns": [
+          {
+            "text": "Service",
+            "value": "job"
+          },
+          {
+            "text": "Status",
+            "value": "Value"
+          },
+          {
+            "text": "Instance",
+            "value": "instance"
+          }
+        ],
+        "styles": [
+          {
+            "alias": "Service",
+            "colorMode": null,
+            "colors": [],
+            "dateFormat": "YYYY-MM-DD HH:mm:ss",
+            "decimals": 2,
+            "pattern": "job",
+            "thresholds": [],
+            "type": "string",
+            "unit": "short"
+          },
+          {
+            "alias": "Status",
+            "colorMode": "cell",
+            "colors": ["#d44a3a", "#299c46", "#299c46"],
+            "dateFormat": "YYYY-MM-DD HH:mm:ss",
+            "decimals": 0,
+            "pattern": "Value",
+            "thresholds": ["0.5", "1"],
+            "type": "string",
+            "unit": "short",
+            "valueMaps": [
+              {
+                "text": "DOWN",
+                "value": "0"
+              },
+              {
+                "text": "UP",
+                "value": "1"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "AI Performance Metrics",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "avg(ai_ninja_stt_accuracy_rate) * 100",
+            "refId": "A",
+            "legendFormat": "STT Accuracy %"
+          },
+          {
+            "expr": "avg(ai_ninja_tts_quality_score) * 100",
+            "refId": "B",
+            "legendFormat": "TTS Quality %"
+          },
+          {
+            "expr": "avg(ai_ninja_spam_detection_accuracy) * 100",
+            "refId": "C",
+            "legendFormat": "Spam Detection Accuracy %"
+          },
+          {
+            "expr": "avg(ai_ninja_caller_satisfaction_score) * 100",
+            "refId": "D",
+            "legendFormat": "Caller Satisfaction %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage",
+            "logBase": 1,
+            "max": 100,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "rightSide": false,
+          "current": true,
+          "avg": true,
+          "max": true
+        }
+      },
+      {
+        "id": 12,
+        "title": "Daily Business Metrics",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 20
+        },
+        "targets": [
+          {
+            "expr": "sum(increase(ai_ninja_calls_total[1h]))",
+            "refId": "A",
+            "legendFormat": "Total Calls (hourly)"
+          },
+          {
+            "expr": "sum(increase(ai_ninja_calls_successful[1h]))",
+            "refId": "B",
+            "legendFormat": "Successful Calls (hourly)"
+          },
+          {
+            "expr": "sum(increase(ai_ninja_spam_blocked_total[1h]))",
+            "refId": "C",
+            "legendFormat": "Spam Blocked (hourly)"
+          },
+          {
+            "expr": "sum(increase(ai_ninja_new_users_total[1h]))",
+            "refId": "D",
+            "legendFormat": "New Users (hourly)"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Count",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "xAxis": {
+          "buckets": null,
+          "mode": "time",
+          "name": null,
+          "show": true,
+          "values": []
+        },
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "bars": true,
+        "stack": false,
+        "percentage": false,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "rightSide": false,
+          "current": true,
+          "avg": true,
+          "max": true,
+          "total": true
+        },
+        "tooltip": {
+          "value_type": "individual",
+          "shared": true,
+          "sort": 2
+        }
+      }
+    ],
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": "-- Grafana --",
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        },
+        {
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "ALERTS{alertname!=\"\", severity=\"critical\"}",
+          "iconColor": "#e24d42",
+          "name": "Critical Alerts",
+          "showIn": 0,
+          "step": "60s",
+          "titleFormat": "Critical: {{alertname}}",
+          "type": "tags"
+        }
+      ]
+    },
+    "templating": {
+      "list": [
+        {
+          "allValue": null,
+          "current": {
+            "text": "production",
+            "value": "production"
+          },
+          "datasource": "Prometheus",
+          "definition": "label_values(up, environment)",
+          "hide": 0,
+          "includeAll": false,
+          "label": "Environment",
+          "multi": false,
+          "name": "environment",
+          "options": [],
+          "query": "label_values(up, environment)",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 0,
+          "tagValuesQuery": "",
+          "tags": [],
+          "tagsQuery": "",
+          "type": "query",
+          "useTags": false
+        },
+        {
+          "allValue": null,
+          "current": {
+            "text": "All",
+            "value": "$__all"
+          },
+          "datasource": "Prometheus",
+          "definition": "label_values(up{environment=\"$environment\"}, job)",
+          "hide": 0,
+          "includeAll": true,
+          "label": "Service",
+          "multi": true,
+          "name": "service",
+          "options": [],
+          "query": "label_values(up{environment=\"$environment\"}, job)",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 1,
+          "tagValuesQuery": "",
+          "tags": [],
+          "tagsQuery": "",
+          "type": "query",
+          "useTags": false
+        }
+      ]
+    }
+  }
+}

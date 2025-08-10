@@ -1,0 +1,794 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "AI Answer Ninja - Infrastructure Deep Dive",
+    "tags": ["ai-ninja", "infrastructure", "detailed", "performance"],
+    "style": "dark",
+    "timezone": "browser",
+    "editable": true,
+    "hideControls": false,
+    "graphTooltip": 0,
+    "time": {
+      "from": "now-2h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d"]
+    },
+    "refresh": "30s",
+    "schemaVersion": 16,
+    "version": 1,
+    "panels": [
+      {
+        "id": 1,
+        "title": "Node Overview",
+        "type": "row",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "collapsed": false
+      },
+      {
+        "id": 2,
+        "title": "CPU Usage by Node",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 1
+        },
+        "targets": [
+          {
+            "expr": "100 - (avg by(instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+            "refId": "A",
+            "legendFormat": "{{instance}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "CPU Usage %",
+            "logBase": 1,
+            "max": 100,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        },
+        "thresholds": [
+          {
+            "value": 80.0,
+            "colorMode": "critical",
+            "op": "gt"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Memory Usage by Node",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 1
+        },
+        "targets": [
+          {
+            "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100",
+            "refId": "A",
+            "legendFormat": "{{instance}} Memory Used"
+          },
+          {
+            "expr": "(node_memory_Cached_bytes + node_memory_Buffers_bytes) / node_memory_MemTotal_bytes * 100",
+            "refId": "B",
+            "legendFormat": "{{instance}} Cached+Buffers"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Memory Usage %",
+            "logBase": 1,
+            "max": 100,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        },
+        "thresholds": [
+          {
+            "value": 85.0,
+            "colorMode": "critical",
+            "op": "gt"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Disk I/O",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 9
+        },
+        "targets": [
+          {
+            "expr": "rate(node_disk_read_bytes_total[5m])",
+            "refId": "A",
+            "legendFormat": "{{instance}} {{device}} Read"
+          },
+          {
+            "expr": "rate(node_disk_written_bytes_total[5m])",
+            "refId": "B",
+            "legendFormat": "{{instance}} {{device}} Write"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Bytes per second",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        }
+      },
+      {
+        "id": 5,
+        "title": "Network I/O",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 9
+        },
+        "targets": [
+          {
+            "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[5m])",
+            "refId": "A",
+            "legendFormat": "{{instance}} {{device}} Received"
+          },
+          {
+            "expr": "rate(node_network_transmit_bytes_total{device!=\"lo\"}[5m])",
+            "refId": "B",
+            "legendFormat": "{{instance}} {{device}} Transmitted"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Bytes per second",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        }
+      },
+      {
+        "id": 6,
+        "title": "Kubernetes Resources",
+        "type": "row",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 17
+        },
+        "collapsed": false
+      },
+      {
+        "id": 7,
+        "title": "Pod CPU Usage",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 0,
+          "y": 18
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"ai-ninja\", container!=\"POD\", container!=\"\"}[5m])) by (pod)",
+            "refId": "A",
+            "legendFormat": "{{pod}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "CPU Cores",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true,
+          "rightSide": true
+        }
+      },
+      {
+        "id": 8,
+        "title": "Pod Memory Usage",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 8,
+          "y": 18
+        },
+        "targets": [
+          {
+            "expr": "sum(container_memory_working_set_bytes{namespace=\"ai-ninja\", container!=\"POD\", container!=\"\"}) by (pod) / 1024 / 1024",
+            "refId": "A",
+            "legendFormat": "{{pod}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Memory (MB)",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true,
+          "rightSide": true
+        }
+      },
+      {
+        "id": 9,
+        "title": "Pod Restart Count",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 16,
+          "y": 18
+        },
+        "targets": [
+          {
+            "expr": "kube_pod_container_status_restarts_total{namespace=\"ai-ninja\"}",
+            "refId": "A",
+            "legendFormat": "{{pod}}/{{container}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Restart Count",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "total": true,
+          "rightSide": true
+        },
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [0],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "model": {
+                  "expr": "increase(kube_pod_container_status_restarts_total{namespace=\"ai-ninja\"}[10m])",
+                  "refId": "A"
+                },
+                "params": ["A", "10m", "now"]
+              },
+              "reducer": {
+                "params": [],
+                "type": "last"
+              },
+              "type": "query"
+            }
+          ],
+          "executionErrorState": "alerting",
+          "frequency": "10s",
+          "handler": 1,
+          "name": "Pod Restart Alert",
+          "noDataState": "no_data",
+          "notifications": []
+        }
+      },
+      {
+        "id": 10,
+        "title": "Database Detailed Metrics",
+        "type": "row",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 26
+        },
+        "collapsed": false
+      },
+      {
+        "id": 11,
+        "title": "PostgreSQL Connection Pool",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 27
+        },
+        "targets": [
+          {
+            "expr": "pg_stat_database_numbackends{datname=\"ai_ninja\"}",
+            "refId": "A",
+            "legendFormat": "Active Connections"
+          },
+          {
+            "expr": "pg_settings_max_connections",
+            "refId": "B",
+            "legendFormat": "Max Connections"
+          },
+          {
+            "expr": "pg_stat_activity_count{datname=\"ai_ninja\", state=\"idle\"}",
+            "refId": "C",
+            "legendFormat": "Idle Connections"
+          },
+          {
+            "expr": "pg_stat_activity_count{datname=\"ai_ninja\", state=\"active\"}",
+            "refId": "D",
+            "legendFormat": "Active Queries"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Connection Count",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        },
+        "thresholds": [
+          {
+            "value": 80,
+            "colorMode": "critical",
+            "op": "gt"
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "PostgreSQL Query Performance",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 27
+        },
+        "targets": [
+          {
+            "expr": "rate(pg_stat_database_tup_fetched{datname=\"ai_ninja\"}[5m])",
+            "refId": "A",
+            "legendFormat": "Tuples Fetched/sec"
+          },
+          {
+            "expr": "rate(pg_stat_database_tup_inserted{datname=\"ai_ninja\"}[5m])",
+            "refId": "B",
+            "legendFormat": "Tuples Inserted/sec"
+          },
+          {
+            "expr": "rate(pg_stat_database_tup_updated{datname=\"ai_ninja\"}[5m])",
+            "refId": "C",
+            "legendFormat": "Tuples Updated/sec"
+          },
+          {
+            "expr": "rate(pg_stat_database_tup_deleted{datname=\"ai_ninja\"}[5m])",
+            "refId": "D",
+            "legendFormat": "Tuples Deleted/sec"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Tuples per second",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        }
+      },
+      {
+        "id": 13,
+        "title": "PostgreSQL Lock Analysis",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 35
+        },
+        "targets": [
+          {
+            "expr": "pg_locks_count{datname=\"ai_ninja\", mode=\"AccessExclusiveLock\"}",
+            "refId": "A",
+            "legendFormat": "Exclusive Locks"
+          },
+          {
+            "expr": "pg_locks_count{datname=\"ai_ninja\", mode=\"RowExclusiveLock\"}",
+            "refId": "B",
+            "legendFormat": "Row Exclusive Locks"
+          },
+          {
+            "expr": "pg_locks_count{datname=\"ai_ninja\", mode=\"ShareLock\"}",
+            "refId": "C",
+            "legendFormat": "Share Locks"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Lock Count",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        },
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [10],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "model": {
+                  "expr": "pg_locks_count{datname=\"ai_ninja\", mode=\"AccessExclusiveLock\"}",
+                  "refId": "A"
+                },
+                "params": ["A", "1m", "now"]
+              },
+              "reducer": {
+                "params": [],
+                "type": "avg"
+              },
+              "type": "query"
+            }
+          ],
+          "executionErrorState": "alerting",
+          "frequency": "10s",
+          "handler": 1,
+          "name": "High Lock Count Alert",
+          "noDataState": "no_data",
+          "notifications": []
+        }
+      },
+      {
+        "id": 14,
+        "title": "PostgreSQL I/O Performance",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 35
+        },
+        "targets": [
+          {
+            "expr": "rate(pg_stat_database_blks_read{datname=\"ai_ninja\"}[5m])",
+            "refId": "A",
+            "legendFormat": "Blocks Read/sec"
+          },
+          {
+            "expr": "rate(pg_stat_database_blks_hit{datname=\"ai_ninja\"}[5m])",
+            "refId": "B",
+            "legendFormat": "Cache Hits/sec"
+          },
+          {
+            "expr": "pg_stat_database_blks_hit{datname=\"ai_ninja\"} / (pg_stat_database_blks_hit{datname=\"ai_ninja\"} + pg_stat_database_blks_read{datname=\"ai_ninja\"}) * 100",
+            "refId": "C",
+            "legendFormat": "Cache Hit Ratio %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Blocks/sec, Hit Ratio %",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        }
+      },
+      {
+        "id": 15,
+        "title": "Redis Performance Deep Dive",
+        "type": "row",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 43
+        },
+        "collapsed": false
+      },
+      {
+        "id": 16,
+        "title": "Redis Memory Analysis",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 44
+        },
+        "targets": [
+          {
+            "expr": "redis_memory_used_bytes",
+            "refId": "A",
+            "legendFormat": "Used Memory"
+          },
+          {
+            "expr": "redis_memory_max_bytes",
+            "refId": "B",
+            "legendFormat": "Max Memory"
+          },
+          {
+            "expr": "redis_memory_used_rss_bytes",
+            "refId": "C",
+            "legendFormat": "RSS Memory"
+          },
+          {
+            "expr": "redis_memory_used_peak_bytes",
+            "refId": "D",
+            "legendFormat": "Peak Memory"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Memory (bytes)",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        }
+      },
+      {
+        "id": 17,
+        "title": "Redis Operations Performance",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 44
+        },
+        "targets": [
+          {
+            "expr": "rate(redis_commands_processed_total[5m])",
+            "refId": "A",
+            "legendFormat": "Commands/sec"
+          },
+          {
+            "expr": "rate(redis_keyspace_hits_total[5m])",
+            "refId": "B",
+            "legendFormat": "Cache Hits/sec"
+          },
+          {
+            "expr": "rate(redis_keyspace_misses_total[5m])",
+            "refId": "C",
+            "legendFormat": "Cache Misses/sec"
+          },
+          {
+            "expr": "rate(redis_keyspace_hits_total[5m]) / (rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m])) * 100",
+            "refId": "D",
+            "legendFormat": "Hit Rate %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Operations/sec, Hit Rate %",
+            "logBase": 1,
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "legend": {
+          "show": true,
+          "alignAsTable": true,
+          "current": true,
+          "max": true,
+          "avg": true
+        }
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "allValue": null,
+          "current": {
+            "text": "All",
+            "value": "$__all"
+          },
+          "datasource": "Prometheus",
+          "definition": "label_values(up, instance)",
+          "hide": 0,
+          "includeAll": true,
+          "label": "Instance",
+          "multi": true,
+          "name": "instance",
+          "options": [],
+          "query": "label_values(up, instance)",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 1,
+          "type": "query"
+        },
+        {
+          "allValue": null,
+          "current": {
+            "text": "ai-ninja",
+            "value": "ai-ninja"
+          },
+          "datasource": "Prometheus",
+          "definition": "label_values(kube_pod_info, namespace)",
+          "hide": 0,
+          "includeAll": false,
+          "label": "Namespace",
+          "multi": false,
+          "name": "namespace",
+          "options": [],
+          "query": "label_values(kube_pod_info, namespace)",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 1,
+          "type": "query"
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": "-- Grafana --",
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,350 @@
+# Azure Services Monitoring Rules
+# External dependency monitoring for Azure services
+
+groups:
+  - name: ai-ninja.azure-services
+    interval: 60s
+    rules:
+      # ===========================================
+      # Azure Speech Services
+      # ===========================================
+      - alert: AzureSpeechServiceDown
+        expr: azure_speech_service_available == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: external-dependency
+          team: ai
+          provider: azure
+          service: speech
+        annotations:
+          summary: "Azure Speech Service is unavailable"
+          description: "Azure Speech Service health check is failing"
+          business_impact: "Critical - Cannot process speech-to-text or text-to-speech"
+          action: "Check Azure service status and failover to backup regions"
+          azure_service: "Speech Services"
+          azure_region: "{{ $labels.region }}"
+
+      - alert: AzureSpeechHighLatency
+        expr: |
+          azure_speech_request_duration_p95 > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+          team: ai
+          provider: azure
+          service: speech
+        annotations:
+          summary: "Azure Speech Service latency is high"
+          description: "P95 latency for Speech Service is {{ $value }}s, above 2s threshold"
+          current_latency: "{{ $value }}s"
+          threshold: "2.0s"
+          action: "Monitor Azure Speech Service performance and consider region failover"
+
+      - alert: AzureSpeechQuotaExceeded
+        expr: |
+          azure_speech_quota_usage_percentage > 90
+        for: 10m
+        labels:
+          severity: critical
+          category: quota
+          team: ai
+          provider: azure
+          service: speech
+        annotations:
+          summary: "Azure Speech Service quota nearly exhausted"
+          description: "Speech Service quota usage is at {{ $value }}%"
+          quota_usage: "{{ $value }}%"
+          business_impact: "High - Risk of service interruption"
+          action: "Request quota increase or implement quota management"
+
+      - alert: AzureSpeechErrorRateHigh
+        expr: |
+          rate(azure_speech_requests_total{status=~"4..|5.."}[10m])
+          /
+          rate(azure_speech_requests_total[10m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          category: reliability
+          team: ai
+          provider: azure
+          service: speech
+        annotations:
+          summary: "High error rate from Azure Speech Service"
+          description: "Error rate is {{ $value | humanizePercentage }} over last 10 minutes"
+          error_rate: "{{ $value | humanizePercentage }}"
+          action: "Check Azure Speech Service logs and authentication"
+
+      # ===========================================
+      # Azure OpenAI Service
+      # ===========================================
+      - alert: AzureOpenAIServiceDown
+        expr: azure_openai_service_available == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: external-dependency
+          team: ai
+          provider: azure
+          service: openai
+        annotations:
+          summary: "Azure OpenAI Service is unavailable"
+          description: "Azure OpenAI Service health check is failing"
+          business_impact: "Critical - Cannot generate AI responses"
+          action: "Check Azure OpenAI service status and failover to backup deployment"
+          azure_service: "OpenAI Service"
+          azure_region: "{{ $labels.region }}"
+
+      - alert: AzureOpenAIHighLatency
+        expr: |
+          azure_openai_request_duration_p95 > 5.0
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+          team: ai
+          provider: azure
+          service: openai
+        annotations:
+          summary: "Azure OpenAI Service latency is high"
+          description: "P95 latency for OpenAI requests is {{ $value }}s, above 5s threshold"
+          current_latency: "{{ $value }}s"
+          threshold: "5.0s"
+          business_impact: "Medium - Slow AI response times"
+          action: "Monitor OpenAI service performance and optimize prompts"
+
+      - alert: AzureOpenAIRateLimited
+        expr: |
+          rate(azure_openai_requests_total{status="429"}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          category: rate-limiting
+          team: ai
+          provider: azure
+          service: openai
+        annotations:
+          summary: "Azure OpenAI Service rate limiting detected"
+          description: "Receiving {{ $value }} rate limit responses per second"
+          rate_limit_rate: "{{ $value }}/sec"
+          business_impact: "High - AI responses being throttled"
+          action: "Implement request queuing or increase OpenAI quota"
+
+      - alert: AzureOpenAITokenUsageHigh
+        expr: |
+          azure_openai_token_usage_percentage > 80
+        for: 15m
+        labels:
+          severity: warning
+          category: quota
+          team: ai
+          provider: azure
+          service: openai
+        annotations:
+          summary: "High Azure OpenAI token usage"
+          description: "Token usage is at {{ $value }}% of monthly quota"
+          token_usage: "{{ $value }}%"
+          action: "Monitor token consumption and optimize prompt efficiency"
+
+      # ===========================================
+      # Azure Communication Services
+      # ===========================================
+      - alert: AzureCommunicationServiceDown
+        expr: azure_communication_service_available == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: external-dependency
+          team: voice
+          provider: azure
+          service: communication
+        annotations:
+          summary: "Azure Communication Service is unavailable"
+          description: "Azure Communication Service health check is failing"
+          business_impact: "Critical - Cannot handle incoming calls"
+          action: "Check Azure Communication Service status and phone number routing"
+          azure_service: "Communication Services"
+
+      - alert: AzureCommunicationCallFailures
+        expr: |
+          rate(azure_communication_calls_total{status="failed"}[10m])
+          /
+          rate(azure_communication_calls_total[10m]) > 0.05
+        for: 3m
+        labels:
+          severity: critical
+          category: reliability
+          team: voice
+          provider: azure
+          service: communication
+        annotations:
+          summary: "High call failure rate from Azure Communication Service"
+          description: "Call failure rate is {{ $value | humanizePercentage }}"
+          failure_rate: "{{ $value | humanizePercentage }}"
+          business_impact: "Critical - Customers cannot connect"
+          action: "Check phone number configuration and service health"
+
+      # ===========================================
+      # Azure Database for PostgreSQL
+      # ===========================================
+      - alert: AzurePostgreSQLDown
+        expr: azure_postgresql_available == 0
+        for: 1m
+        labels:
+          severity: critical
+          category: external-dependency
+          team: platform
+          provider: azure
+          service: postgresql
+        annotations:
+          summary: "Azure PostgreSQL database is unavailable"
+          description: "Cannot connect to Azure PostgreSQL database"
+          business_impact: "Critical - Data layer unavailable"
+          action: "Check Azure PostgreSQL service status and failover"
+
+      - alert: AzurePostgreSQLHighConnections
+        expr: |
+          azure_postgresql_connections_active 
+          / 
+          azure_postgresql_connections_max > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          category: resource
+          team: platform
+          provider: azure
+          service: postgresql
+        annotations:
+          summary: "Azure PostgreSQL connection usage high"
+          description: "Using {{ $value | humanizePercentage }} of available connections"
+          connection_usage: "{{ $value | humanizePercentage }}"
+          action: "Optimize connection pooling or increase connection limit"
+
+      - alert: AzurePostgreSQLHighCPU
+        expr: |
+          azure_postgresql_cpu_percent > 80
+        for: 10m
+        labels:
+          severity: warning
+          category: resource
+          team: platform
+          provider: azure
+          service: postgresql
+        annotations:
+          summary: "Azure PostgreSQL CPU usage high"
+          description: "Database CPU usage is {{ $value }}%"
+          cpu_usage: "{{ $value }}%"
+          action: "Optimize queries or scale up database tier"
+
+      - alert: AzurePostgreSQLStorageFull
+        expr: |
+          azure_postgresql_storage_percent > 90
+        for: 5m
+        labels:
+          severity: critical
+          category: resource
+          team: platform
+          provider: azure
+          service: postgresql
+        annotations:
+          summary: "Azure PostgreSQL storage nearly full"
+          description: "Database storage usage is {{ $value }}%"
+          storage_usage: "{{ $value }}%"
+          business_impact: "High - Database may become read-only"
+          action: "Increase storage size or clean up old data"
+
+      # ===========================================
+      # Azure Redis Cache
+      # ===========================================
+      - alert: AzureRedisDown
+        expr: azure_redis_available == 0
+        for: 1m
+        labels:
+          severity: critical
+          category: external-dependency
+          team: platform
+          provider: azure
+          service: redis
+        annotations:
+          summary: "Azure Redis Cache is unavailable"
+          description: "Cannot connect to Azure Redis Cache"
+          business_impact: "High - Caching and session storage unavailable"
+          action: "Check Azure Redis service status and implement fallback"
+
+      - alert: AzureRedisHighMemoryUsage
+        expr: |
+          azure_redis_memory_usage_percentage > 90
+        for: 5m
+        labels:
+          severity: critical
+          category: resource
+          team: platform
+          provider: azure
+          service: redis
+        annotations:
+          summary: "Azure Redis memory usage critical"
+          description: "Redis memory usage is {{ $value }}%"
+          memory_usage: "{{ $value }}%"
+          business_impact: "High - Risk of data eviction"
+          action: "Clean up expired keys or scale up Redis tier"
+
+      - alert: AzureRedisHighLatency
+        expr: |
+          azure_redis_latency_avg > 10
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+          team: platform
+          provider: azure
+          service: redis
+        annotations:
+          summary: "Azure Redis latency is high"
+          description: "Average Redis latency is {{ $value }}ms"
+          current_latency: "{{ $value }}ms"
+          threshold: "10ms"
+          action: "Check Redis performance and consider scaling"
+
+      # ===========================================
+      # Azure Monitor Integration
+      # ===========================================
+      - alert: AzureServiceHealthAlert
+        expr: azure_service_health_alert == 1
+        for: 1m
+        labels:
+          severity: warning
+          category: external-dependency
+          team: platform
+          provider: azure
+          service: "{{ $labels.service_name }}"
+        annotations:
+          summary: "Azure service health alert for {{ $labels.service_name }}"
+          description: "Azure reports service health issue: {{ $labels.description }}"
+          azure_service: "{{ $labels.service_name }}"
+          azure_region: "{{ $labels.region }}"
+          impact_level: "{{ $labels.impact_level }}"
+          action: "Monitor Azure status page and implement workarounds if needed"
+
+      # ===========================================
+      # Cross-Service Dependencies
+      # ===========================================
+      - alert: AzureServiceCascadeFailure
+        expr: |
+          count by (region) (azure_speech_service_available == 0) +
+          count by (region) (azure_openai_service_available == 0) +
+          count by (region) (azure_communication_service_available == 0) >= 2
+        for: 2m
+        labels:
+          severity: critical
+          category: cascade-failure
+          team: platform
+          provider: azure
+        annotations:
+          summary: "Multiple Azure services failing in region {{ $labels.region }}"
+          description: "{{ $value }} critical Azure services are unavailable in the same region"
+          failed_services: "{{ $value }}"
+          business_impact: "Critical - Major service disruption"
+          action: "Implement emergency failover to backup region"
+          escalation: "Page on-call manager immediately"
