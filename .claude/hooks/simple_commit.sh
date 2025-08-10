@@ -10,29 +10,32 @@ fi
 
 # Smart selective staging - only include relevant files
 echo "📁 Staging relevant changes..."
-git add \
-    "*.md" \
-    "*.js" \
-    "*.ts" \
-    "*.json" \
-    "*.yaml" \
-    "*.yml" \
-    "*.go" \
-    "*.py" \
-    "*.sql" \
-    "*.sh" \
-    "*.conf" \
-    "Dockerfile*" \
-    "docker-compose*" \
-    "Makefile" \
-    ".claude/**" \
-    "config/**" \
-    "scripts/**" \
-    "k8s/**" \
-    "helm/**" \
-    "database/**" \
-    "docs/**" \
-    2>/dev/null || true
+
+# Add files using find to handle subdirectories properly
+find . -type f \( \
+    -name "*.md" -o \
+    -name "*.js" -o \
+    -name "*.ts" -o \
+    -name "*.json" -o \
+    -name "*.yaml" -o \
+    -name "*.yml" -o \
+    -name "*.go" -o \
+    -name "*.py" -o \
+    -name "*.sql" -o \
+    -name "*.sh" -o \
+    -name "*.conf" -o \
+    -name "Dockerfile*" -o \
+    -name "docker-compose*" -o \
+    -name "Makefile" \
+\) \
+-not -path "./node_modules/*" \
+-not -path "./.git/*" \
+-not -path "./tmp/*" \
+-not -name "*.log" \
+| xargs git add 2>/dev/null || true
+
+# Add important directories
+git add .claude/ config/ scripts/ k8s/ helm/ database/ docs/ deployment/ 2>/dev/null || true
 
 # Exclude unwanted files/directories
 git reset HEAD -- node_modules/ 2>/dev/null || true
