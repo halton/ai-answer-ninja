@@ -1,0 +1,216 @@
+version: '3.8'
+
+# AI Answer Ninja - Simplified Development Environment
+# Focused on core services for development testing
+
+networks:
+  ai-ninja-dev:
+    driver: bridge
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+  prometheus_dev_data:
+  grafana_dev_data:
+
+services:
+  # ===========================================
+  # Data Layer
+  # ===========================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai-ninja-postgres-dev
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ai_ninja_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_ninja_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password_123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - ai-ninja-dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_ninja_dev} -d ${POSTGRES_DB:-ai_ninja_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai-ninja-redis-dev
+    command: redis-server --appendonly yes --maxmemory 256mb
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - ai-ninja-dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ===========================================
+  # Core Services (Simplified)
+  # ===========================================
+  user-management:
+    build:
+      context: ./services/user-management
+      dockerfile: Dockerfile
+      target: development
+    container_name: ai-ninja-user-management-dev
+    environment:
+      - NODE_ENV=development
+      - PORT=3005
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-ai_ninja_dev}:${POSTGRES_PASSWORD:-dev_password_123}@postgres:5432/${POSTGRES_DB:-ai_ninja_dev}
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-dev_jwt_secret_key_2024}
+    ports:
+      - "3005:3005"
+    volumes:
+      - ./services/user-management:/app
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-ninja-dev
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  realtime-processor:
+    build:
+      context: ./services/realtime-processor
+      dockerfile: Dockerfile
+      target: development
+    container_name: ai-ninja-realtime-dev
+    environment:
+      - NODE_ENV=development
+      - PORT=3002
+      - REDIS_URL=redis://redis:6379
+      - AZURE_SPEECH_ENDPOINT=${AZURE_SPEECH_ENDPOINT:-mock}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-mock}
+    ports:
+      - "3002:3002"
+    volumes:
+      - ./services/realtime-processor:/app
+      - /app/node_modules
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-ninja-dev
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # Frontend
+  # ===========================================
+  admin-panel:
+    build:
+      context: ./frontend/admin-panel
+      dockerfile: Dockerfile
+      target: development
+    container_name: ai-ninja-frontend-dev
+    environment:
+      - NODE_ENV=development
+      - VITE_API_BASE_URL=http://localhost:8080
+      - VITE_WS_URL=ws://localhost:3002
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/admin-panel:/app
+      - /app/node_modules
+    networks:
+      - ai-ninja-dev
+
+  # ===========================================
+  # API Gateway (Nginx)
+  # ===========================================
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: ai-ninja-nginx-dev
+    ports:
+      - "8080:80"
+    volumes:
+      - ./config/nginx/nginx-dev.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - user-management
+      - realtime-processor
+    networks:
+      - ai-ninja-dev
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # Monitoring (Simplified)
+  # ===========================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ai-ninja-prometheus-dev
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus-dev.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_dev_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=7d'
+    networks:
+      - ai-ninja-dev
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ai-ninja-grafana-dev
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_dev_data:/var/lib/grafana
+      - ./monitoring/grafana:/etc/grafana/provisioning
+    networks:
+      - ai-ninja-dev
+
+  # ===========================================
+  # Testing Service
+  # ===========================================
+  test-runner:
+    build:
+      context: ./tests
+      dockerfile: Dockerfile.simple
+    container_name: ai-ninja-test-runner-dev
+    environment:
+      - NODE_ENV=test
+      - API_BASE_URL=http://nginx
+      - DB_URL=postgresql://${POSTGRES_USER:-ai_ninja_dev}:${POSTGRES_PASSWORD:-dev_password_123}@postgres:5432/${POSTGRES_DB:-ai_ninja_dev}
+    volumes:
+      - ./tests:/app/tests
+      - ./coverage:/app/coverage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      user-management:
+        condition: service_healthy
+    networks:
+      - ai-ninja-dev
+    profiles:
+      - test

@@ -1,0 +1,233 @@
+version: '3.8'
+
+# AI Answer Ninja - Comprehensive Testing Environment
+# Isolated testing infrastructure with mock services
+
+services:
+  # ===========================================
+  # Test Database
+  # ===========================================
+  postgres-test:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ai_ninja_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    volumes:
+      - ../database/init:/docker-entrypoint-initdb.d
+      - ./fixtures/sql:/fixtures
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d ai_ninja_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  redis-test:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+
+  # ===========================================
+  # Mock External Services
+  # ===========================================
+  azure-mock:
+    build:
+      context: .
+      dockerfile: ./mocks/Dockerfile.azure-mock
+    ports:
+      - "8081:8081"  # Azure Speech Mock
+      - "8082:8082"  # Azure OpenAI Mock
+      - "8083:8083"  # Azure Communication Mock
+    environment:
+      - MOCK_LATENCY=100
+      - MOCK_SUCCESS_RATE=0.95
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ===========================================
+  # Test Services (Lightweight versions)
+  # ===========================================
+  user-management-test:
+    build:
+      context: ../services/user-management
+      dockerfile: Dockerfile
+      target: testing
+    environment:
+      - NODE_ENV=test
+      - PORT=3005
+      - DATABASE_URL=postgresql://test_user:test_password@postgres-test:5432/ai_ninja_test
+      - REDIS_URL=redis://redis-test:6379
+      - JWT_SECRET=test_jwt_secret
+    ports:
+      - "3105:3005"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    volumes:
+      - ../services/user-management:/app
+      - ./fixtures/data:/app/fixtures
+    command: npm run test:watch
+
+  realtime-processor-test:
+    build:
+      context: ../services/realtime-processor
+      dockerfile: Dockerfile
+      target: development
+    environment:
+      - NODE_ENV=test
+      - PORT=3002
+      - REDIS_URL=redis://redis-test:6379
+      - AZURE_SPEECH_ENDPOINT=http://azure-mock:8081
+      - AZURE_OPENAI_ENDPOINT=http://azure-mock:8082
+      - AZURE_COMM_ENDPOINT=http://azure-mock:8083
+    ports:
+      - "3102:3002"
+    depends_on:
+      redis-test:
+        condition: service_healthy
+      azure-mock:
+        condition: service_healthy
+    volumes:
+      - ../services/realtime-processor:/app
+      - ./fixtures/audio:/app/fixtures/audio
+
+  # ===========================================
+  # Test Orchestration
+  # ===========================================
+  test-runner:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.test-runner
+    environment:
+      - NODE_ENV=test
+      - TEST_DB_URL=postgresql://test_user:test_password@postgres-test:5432/ai_ninja_test
+      - TEST_REDIS_URL=redis://redis-test:6379
+      - API_BASE_URL=http://user-management-test:3005
+      - REALTIME_URL=http://realtime-processor-test:3002
+      - AZURE_MOCK_URL=http://azure-mock:8081
+      - PARALLEL_JOBS=4
+      - TEST_TIMEOUT=30000
+    volumes:
+      - .:/app/tests
+      - ../services:/app/services:ro
+      - ./coverage:/app/coverage
+      - ./reports:/app/reports
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+      azure-mock:
+        condition: service_healthy
+      user-management-test:
+        condition: service_started
+      realtime-processor-test:
+        condition: service_started
+    command: npm run test:all
+    profiles:
+      - test
+
+  # ===========================================
+  # Load Testing
+  # ===========================================
+  load-test:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.load-tester
+    environment:
+      - TARGET_BASE_URL=http://user-management-test:3005
+      - REALTIME_TARGET=ws://realtime-processor-test:3002
+      - CONCURRENT_USERS=10
+      - RAMP_UP_DURATION=30s
+      - TEST_DURATION=60s
+      - SCENARIOS=basic,realtime,stress
+    volumes:
+      - ./load:/app/scenarios
+      - ./reports/load:/app/reports
+    depends_on:
+      - test-runner
+    profiles:
+      - load-test
+
+  # ===========================================
+  # E2E Testing with Browser
+  # ===========================================
+  e2e-test:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.e2e
+    environment:
+      - NODE_ENV=test
+      - BASE_URL=http://admin-panel-test:3000
+      - API_BASE_URL=http://user-management-test:3005
+      - HEADLESS=true
+      - BROWSER=chromium
+    volumes:
+      - ./e2e:/app/e2e
+      - ./reports/e2e:/app/reports
+      - ./screenshots:/app/screenshots
+    depends_on:
+      - admin-panel-test
+    profiles:
+      - e2e
+
+  admin-panel-test:
+    build:
+      context: ../frontend/admin-panel
+      dockerfile: Dockerfile
+      target: development
+    environment:
+      - NODE_ENV=test
+      - VITE_API_BASE_URL=http://user-management-test:3005
+      - VITE_WS_URL=ws://realtime-processor-test:3002
+    ports:
+      - "3100:3000"
+    profiles:
+      - e2e
+
+  # ===========================================
+  # Test Data Management
+  # ===========================================
+  test-data-manager:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.data-manager
+    environment:
+      - DB_URL=postgresql://test_user:test_password@postgres-test:5432/ai_ninja_test
+      - REDIS_URL=redis://redis-test:6379
+    volumes:
+      - ./fixtures:/app/fixtures
+      - ./data:/app/data
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    command: npm run fixtures:generate
+    profiles:
+      - setup
+
+networks:
+  default:
+    name: ai-ninja-test
+
+volumes:
+  test_reports:
+  test_coverage:
+  test_screenshots:

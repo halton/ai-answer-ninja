@@ -1,0 +1,197 @@
+# Prometheus Configuration for AI Answer Ninja
+# Comprehensive monitoring setup for microservices
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'ai-ninja-production'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+rule_files:
+  - "rules/*.yml"
+
+scrape_configs:
+  # ===========================================
+  # Infrastructure Monitoring
+  # ===========================================
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 30s
+
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 30s
+
+  - job_name: 'redis-exporter'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 15s
+
+  - job_name: 'nginx-exporter'
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+    scrape_interval: 15s
+
+  # ===========================================
+  # Core Business Services
+  # ===========================================
+  - job_name: 'phone-gateway'
+    static_configs:
+      - targets: ['phone-gateway:3001']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  - job_name: 'realtime-processor'
+    static_configs:
+      - targets: ['realtime-processor:3002']
+    metrics_path: '/metrics'
+    scrape_interval: 5s  # High frequency for real-time service
+    scrape_timeout: 3s
+    params:
+      format: ['prometheus']
+
+  - job_name: 'conversation-engine'
+    static_configs:
+      - targets: ['conversation-engine:3003']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  - job_name: 'profile-analytics'
+    static_configs:
+      - targets: ['profile-analytics:3004']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  - job_name: 'user-management'
+    static_configs:
+      - targets: ['user-management:3005']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  - job_name: 'smart-whitelist'
+    static_configs:
+      - targets: ['smart-whitelist:3006']
+    metrics_path: '/metrics'
+    scrape_interval: 20s
+
+  - job_name: 'configuration-service'
+    static_configs:
+      - targets: ['configuration-service:3007']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  - job_name: 'storage-service'
+    static_configs:
+      - targets: ['storage-service:3008']
+    metrics_path: '/metrics'
+    scrape_interval: 20s
+
+  - job_name: 'monitoring-service'
+    static_configs:
+      - targets: ['monitoring-service:3009']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # ===========================================
+  # External Service Health Checks
+  # ===========================================
+  - job_name: 'azure-services-health'
+    static_configs:
+      - targets: ['monitoring-service:3009']
+    metrics_path: '/health/azure'
+    scrape_interval: 60s
+    scrape_timeout: 30s
+
+  # ===========================================
+  # Application Performance Monitoring
+  # ===========================================
+  - job_name: 'business-metrics'
+    static_configs:
+      - targets: ['monitoring-service:3009']
+    metrics_path: '/metrics/business'
+    scrape_interval: 30s
+    params:
+      include: ['calls', 'ai_responses', 'user_activity']
+
+  # ===========================================
+  # Custom Metrics Collection
+  # ===========================================
+  - job_name: 'ai-performance-metrics'
+    honor_labels: true
+    static_configs:
+      - targets: ['realtime-processor:3002']
+    metrics_path: '/metrics/ai-performance'
+    scrape_interval: 10s
+    metric_relabel_configs:
+      # Label AI response latency metrics
+      - source_labels: [__name__]
+        regex: 'ai_response_latency_(.*)'
+        target_label: 'ai_component'
+        replacement: '${1}'
+
+  # ===========================================
+  # Health Check Monitoring
+  # ===========================================
+  - job_name: 'service-health'
+    static_configs:
+      - targets: 
+        - 'phone-gateway:3001'
+        - 'realtime-processor:3002'
+        - 'conversation-engine:3003'
+        - 'profile-analytics:3004'
+        - 'user-management:3005'
+        - 'smart-whitelist:3006'
+        - 'configuration-service:3007'
+        - 'storage-service:3008'
+        - 'monitoring-service:3009'
+    metrics_path: '/health'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    
+  # ===========================================
+  # Federation (for multi-cluster setup)
+  # ===========================================
+  - job_name: 'federate'
+    scrape_interval: 15s
+    honor_labels: true
+    metrics_path: '/federate'
+    params:
+      'match[]':
+        - '{job=~"ai-.*"}'
+        - '{__name__=~"up|instance:.*"}'
+        - '{__name__=~"ai_ninja:.*"}'
+    static_configs:
+      - targets:
+        - 'prometheus-staging:9090'
+        - 'prometheus-dev:9090'
+    # Only scrape if staging/dev environments exist
+    # Can be commented out for single environment
+
+# Storage configuration
+storage:
+  tsdb:
+    path: /prometheus
+    retention.time: 30d
+    retention.size: 10GB
+    wal-compression: true
+
+# Logging configuration  
+log_level: info
+log_format: json

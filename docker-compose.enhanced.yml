@@ -1,0 +1,425 @@
+version: '3.8'
+
+# AI Answer Ninja - Enhanced Production Docker Compose
+# Complete microservices orchestration with monitoring
+
+networks:
+  ai-ninja:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  elasticsearch_data:
+  audio_storage:
+  logs:
+
+services:
+  # ===========================================
+  # Data Layer
+  # ===========================================
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ai_ninja
+      POSTGRES_USER: ai_ninja
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+      - ./database/schemas:/schemas
+    ports:
+      - "5432:5432"
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.2
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_ninja -d ai_ninja"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    ports:
+      - "6379:6379"
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.3
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ===========================================
+  # Core Business Services
+  # ===========================================
+  phone-gateway:
+    build:
+      context: .
+      dockerfile: ./docker/phone-gateway.Dockerfile
+      target: production
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+      - AZURE_COMM_CONNECTION_STRING=${AZURE_COMM_CONNECTION_STRING}
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.11
+    volumes:
+      - logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+
+  realtime-processor:
+    build:
+      context: ./services/realtime-processor
+      dockerfile: Dockerfile
+      target: production
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - REDIS_HOST=redis
+      - AZURE_SPEECH_KEY=${AZURE_SPEECH_KEY}
+      - AZURE_SPEECH_REGION=${AZURE_SPEECH_REGION}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_KEY=${AZURE_OPENAI_KEY}
+    ports:
+      - "3002:3002"
+    depends_on:
+      - redis
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.12
+    volumes:
+      - logs:/app/logs
+      - audio_storage:/app/audio
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+
+  conversation-engine:
+    build:
+      context: ./services/conversation-engine
+      dockerfile: Dockerfile
+    environment:
+      - ENVIRONMENT=production
+      - PORT=3003
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_KEY=${AZURE_OPENAI_KEY}
+    ports:
+      - "3003:3003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.13
+    volumes:
+      - logs:/app/logs
+
+  profile-analytics:
+    build:
+      context: ./services/profile-analytics
+      dockerfile: Dockerfile
+    environment:
+      - ENVIRONMENT=production
+      - PORT=3004
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+      - ML_MODELS_PATH=/app/models
+    ports:
+      - "3004:3004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.14
+    volumes:
+      - logs:/app/logs
+      - ./ml/models:/app/models:ro
+
+  user-management:
+    build:
+      context: ./services/user-management
+      dockerfile: Dockerfile
+      target: production
+    environment:
+      - NODE_ENV=production
+      - PORT=3005
+      - DATABASE_URL=postgresql://ai_ninja:${DB_PASSWORD:-secure_password_123}@postgres:5432/ai_ninja
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-jwt_secret_key_2024}
+    ports:
+      - "3005:3005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.15
+    volumes:
+      - logs:/app/logs
+
+  smart-whitelist:
+    build:
+      context: ./services/smart-whitelist
+      dockerfile: Dockerfile
+    environment:
+      - ENVIRONMENT=production
+      - PORT=3006
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+      - ML_ENDPOINT=http://profile-analytics:3004
+    ports:
+      - "3006:3006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.16
+
+  configuration-service:
+    build:
+      context: ./services/configuration-service
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ENV=production
+      - PORT=3007
+      - REDIS_HOST=redis
+    ports:
+      - "3007:3007"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.17
+
+  storage-service:
+    build:
+      context: ./services/storage-service
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ENV=production
+      - PORT=3008
+      - STORAGE_PATH=/app/storage
+      - AZURE_STORAGE_CONNECTION_STRING=${AZURE_STORAGE_CONNECTION_STRING}
+    ports:
+      - "3008:3008"
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.18
+    volumes:
+      - audio_storage:/app/storage
+
+  monitoring-service:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ENV=production
+      - PORT=3009
+      - PROMETHEUS_URL=http://prometheus:9090
+      - GRAFANA_URL=http://grafana:3000
+    ports:
+      - "3009:3009"
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.19
+
+  # ===========================================
+  # Frontend Services
+  # ===========================================
+  admin-panel:
+    build:
+      context: ./frontend/admin-panel
+      dockerfile: Dockerfile
+      target: production
+    environment:
+      - NODE_ENV=production
+      - VITE_API_BASE_URL=http://localhost:8080
+      - VITE_WS_URL=ws://localhost:3002
+    ports:
+      - "3000:3000"
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.20
+
+  # ===========================================
+  # Infrastructure Services
+  # ===========================================
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./config/nginx/ssl:/etc/nginx/ssl:ro
+      - logs:/var/log/nginx
+    depends_on:
+      - phone-gateway
+      - realtime-processor
+      - conversation-engine
+      - profile-analytics
+      - user-management
+      - smart-whitelist
+      - configuration-service
+      - storage-service
+      - monitoring-service
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.21
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # Monitoring Stack
+  # ===========================================
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.31
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana:/etc/grafana/provisioning
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.32
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.33
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.8.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      ai-ninja:
+        ipv4_address: 172.20.0.34
+
+  # ===========================================
+  # Development and Testing Services
+  # ===========================================
+  test-runner:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.test-runner
+    environment:
+      - NODE_ENV=test
+      - TEST_DB_HOST=postgres
+      - TEST_REDIS_HOST=redis
+    volumes:
+      - ./tests:/app/tests
+      - ./coverage:/app/coverage
+      - logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-ninja
+    profiles:
+      - test
+
+  load-tester:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.load-tester
+    environment:
+      - TARGET_HOST=nginx
+      - CONCURRENT_USERS=50
+      - RAMP_UP_DURATION=30s
+    depends_on:
+      - nginx
+    networks:
+      - ai-ninja
+    profiles:
+      - load-test
