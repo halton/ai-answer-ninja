@@ -234,7 +234,9 @@ export class AIConversationService {
       top_p: 0.9,
       frequency_penalty: 0.0,
       presence_penalty: 0.0,
-      stop: ['\n\n', '用户:', 'Human:'],
+      stop: ['
+
+', '用户:', 'Human:'],
     };
 
     logger.debug(
@@ -314,23 +316,32 @@ export class AIConversationService {
     conversationHistory: string,
     context: ConversationContext
   ): string {
-    let prompt = `来电者说："${transcript}"\n`;
+    let prompt = `来电者说："${transcript}"
+`;
     
     if (conversationHistory) {
-      prompt += `\n对话历史：\n${conversationHistory}\n`;
+      prompt += `
+对话历史：
+${conversationHistory}
+`;
     }
 
-    prompt += `\n意图分析：${intent.intent}（置信度：${intent.confidence}）`;
+    prompt += `
+意图分析：${intent.intent}（置信度：${intent.confidence}）`;
     
     if (intent.emotionalTone) {
-      prompt += `\n语调：${intent.emotionalTone}`;
+      prompt += `
+语调：${intent.emotionalTone}`;
     }
 
     if (context.messageCount && context.messageCount > 3) {
-      prompt += `\n注意：这已经是第${context.messageCount}次交互，对方比较坚持，可能需要更坚决的回应。`;
+      prompt += `
+注意：这已经是第${context.messageCount}次交互，对方比较坚持，可能需要更坚决的回应。`;
     }
 
-    prompt += `\n\n请生成一个合适的回复：`;
+    prompt += `
+
+请生成一个合适的回复：`;
 
     return prompt;
   }
@@ -343,7 +354,8 @@ export class AIConversationService {
     return context.recentTranscripts
       .slice(-3) // Only last 3 exchanges
       .map((transcript, index) => `${index % 2 === 0 ? '来电者' : '我'}：${transcript}`)
-      .join('\n');
+      .join('
+');
   }
 
   private determineResponseStrategy(
@@ -376,7 +388,8 @@ export class AIConversationService {
     
     // Clean up the response
     text = text.replace(/^(我|用户)[:：]?\s*/, '');
-    text = text.replace(/\n+/g, ' ').trim();
+    text = text.replace(/
++/g, ' ').trim();
     
     // Ensure appropriate length
     if (text.length > 50) {

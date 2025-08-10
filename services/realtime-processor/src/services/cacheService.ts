@@ -348,4 +348,303 @@ export class CacheService {
       if (l2Result) {
         this.recordHit('tts');
         
-        const audioBuffer = Buffer.from(l2Result, 'base64');\n        const entry: CacheEntry<Buffer> = {\n          data: audioBuffer,\n          timestamp: Date.now(),\n          accessCount: 1,\n          size: audioBuffer.length,\n        };\n        this.ttsCache.set(key, entry);\n        \n        return audioBuffer;\n      }\n    } catch (error) {\n      logger.warn({ error, key }, 'TTS L2 cache lookup failed');\n    }\n    \n    this.recordMiss('tts');\n    return null;\n  }\n\n  async setTtsAudio(text: string, audioBuffer: Buffer, voiceProfile?: string): Promise<void> {\n    if (!this.config.enabled) return;\n    \n    const key = this.keyBuilders.tts(text, voiceProfile);\n    const entry: CacheEntry<Buffer> = {\n      data: audioBuffer,\n      timestamp: Date.now(),\n      accessCount: 0,\n      size: audioBuffer.length,\n    };\n    \n    this.ttsCache.set(key, entry);\n    \n    // Store as base64 in Redis\n    const base64Audio = audioBuffer.toString('base64');\n    this.redis.set(key, base64Audio, this.config.ttl.ttsAudio).catch(error => {\n      logger.warn({ error, key }, 'Failed to store TTS audio in L2 cache');\n    });\n  }\n\n  // User Profile Cache Methods\n  async getUserProfile(userId: string): Promise<any | null> {\n    if (!this.config.enabled) return null;\n    \n    const key = this.keyBuilders.userProfile(userId);\n    \n    const l1Result = this.userProfileCache.get(key);\n    if (l1Result) {\n      this.recordHit('userProfile');\n      l1Result.accessCount++;\n      return l1Result.data;\n    }\n    \n    try {\n      const l2Result = await this.redis.get(key);\n      if (l2Result) {\n        this.recordHit('userProfile');\n        \n        const entry: CacheEntry<any> = {\n          data: l2Result,\n          timestamp: Date.now(),\n          accessCount: 1,\n          size: JSON.stringify(l2Result).length,\n        };\n        this.userProfileCache.set(key, entry);\n        \n        return l2Result;\n      }\n    } catch (error) {\n      logger.warn({ error, key }, 'User profile L2 cache lookup failed');\n    }\n    \n    this.recordMiss('userProfile');\n    return null;\n  }\n\n  async setUserProfile(userId: string, profile: any): Promise<void> {\n    if (!this.config.enabled) return;\n    \n    const key = this.keyBuilders.userProfile(userId);\n    const entry: CacheEntry<any> = {\n      data: profile,\n      timestamp: Date.now(),\n      accessCount: 0,\n      size: JSON.stringify(profile).length,\n    };\n    \n    this.userProfileCache.set(key, entry);\n    \n    this.redis.set(key, profile, this.config.ttl.userProfiles).catch(error => {\n      logger.warn({ error, key }, 'Failed to store user profile in L2 cache');\n    });\n  }\n\n  // Preloading and Warming Methods\n  async preloadCommonResponses(): Promise<void> {\n    if (!this.config.preloadingEnabled) return;\n    \n    const commonResponses = [\n      '您好，我现在不方便接听',\n      '谢谢，我不需要这个服务',\n      '我对您的产品不感兴趣',\n      '请不要再打电话给我',\n      '我已经有相关的服务了',\n      '现在不是合适的时候',\n      '我需要考虑一下',\n      '请发资料给我看看',\n    ];\n    \n    logger.info({ count: commonResponses.length }, 'Preloading common TTS responses');\n    \n    for (const response of commonResponses) {\n      const key = this.keyBuilders.tts(response);\n      if (!this.ttsCache.has(key)) {\n        this.preloadQueue.add(key);\n      }\n    }\n  }\n\n  async warmupCaches(): Promise<void> {\n    if (!this.config.preloadingEnabled) return;\n    \n    try {\n      // Preload common responses\n      await this.preloadCommonResponses();\n      \n      // Load frequently accessed user profiles\n      await this.preloadFrequentProfiles();\n      \n      logger.info({\n        preloadQueueSize: this.preloadQueue.size,\n      }, 'Cache warmup completed');\n      \n    } catch (error) {\n      logger.error({ error }, 'Cache warmup failed');\n    }\n  }\n\n  private async preloadFrequentProfiles(): Promise<void> {\n    try {\n      // Get list of frequently accessed user profiles from Redis\n      const frequentUsers = await this.redis.smembers('frequent_users');\n      \n      for (const userId of frequentUsers) {\n        const profile = await this.getUserProfile(userId);\n        if (profile) {\n          logger.debug({ userId }, 'Preloaded user profile');\n        }\n      }\n    } catch (error) {\n      logger.warn({ error }, 'Failed to preload frequent user profiles');\n    }\n  }\n\n  private startWarmupProcess(): void {\n    // Initial warmup\n    this.warmupCaches();\n    \n    // Periodic warmup every 30 minutes\n    this.warmupInterval = setInterval(() => {\n      this.warmupCaches();\n    }, 30 * 60 * 1000);\n  }\n\n  // Statistics and Monitoring\n  private recordHit(cacheType: string): void {\n    this.stats[cacheType].totalHits++;\n    this.updateHitRate(cacheType);\n  }\n\n  private recordMiss(cacheType: string): void {\n    this.stats[cacheType].totalMisses++;\n    this.updateHitRate(cacheType);\n  }\n\n  private updateHitRate(cacheType: string): void {\n    const stats = this.stats[cacheType];\n    const total = stats.totalHits + stats.totalMisses;\n    stats.hitRate = total > 0 ? stats.totalHits / total : 0;\n  }\n\n  public getCacheStats(): Record<string, CacheStats & { l1Size: number; l2Size?: number }> {\n    const result: Record<string, CacheStats & { l1Size: number; l2Size?: number }> = {};\n    \n    result.stt = { ...this.stats.stt, l1Size: this.sttCache.size };\n    result.intent = { ...this.stats.intent, l1Size: this.intentCache.size };\n    result.aiResponse = { ...this.stats.aiResponse, l1Size: this.aiResponseCache.size };\n    result.tts = { ...this.stats.tts, l1Size: this.ttsCache.size };\n    result.userProfile = { ...this.stats.userProfile, l1Size: this.userProfileCache.size };\n    \n    return result;\n  }\n\n  public getHealthStatus(): {\n    status: 'healthy' | 'degraded' | 'unhealthy';\n    details: any;\n  } {\n    const stats = this.getCacheStats();\n    const avgHitRate = Object.values(stats).reduce((sum, stat) => sum + stat.hitRate, 0) / Object.keys(stats).length;\n    \n    let status: 'healthy' | 'degraded' | 'unhealthy';\n    \n    if (avgHitRate > 0.7) {\n      status = 'healthy';\n    } else if (avgHitRate > 0.4) {\n      status = 'degraded';\n    } else {\n      status = 'unhealthy';\n    }\n    \n    return {\n      status,\n      details: {\n        averageHitRate: avgHitRate,\n        cacheStats: stats,\n        config: this.config,\n        uptime: Date.now() - (this.stats.stt?.totalHits + this.stats.stt?.totalMisses || 0),\n      },\n    };\n  }\n\n  // Cache Management\n  async invalidateCache(cacheType: string, pattern?: string): Promise<void> {\n    switch (cacheType) {\n      case 'stt':\n        this.sttCache.clear();\n        break;\n      case 'intent':\n        this.intentCache.clear();\n        break;\n      case 'aiResponse':\n        this.aiResponseCache.clear();\n        break;\n      case 'tts':\n        this.ttsCache.clear();\n        break;\n      case 'userProfile':\n        this.userProfileCache.clear();\n        break;\n      case 'all':\n        this.sttCache.clear();\n        this.intentCache.clear();\n        this.aiResponseCache.clear();\n        this.ttsCache.clear();\n        this.userProfileCache.clear();\n        break;\n    }\n    \n    logger.info({ cacheType, pattern }, 'Cache invalidated');\n  }\n\n  async shutdown(): Promise<void> {\n    if (this.warmupInterval) {\n      clearInterval(this.warmupInterval);\n      this.warmupInterval = undefined;\n    }\n    \n    // Clear all caches\n    await this.invalidateCache('all');\n    \n    logger.info('Cache Service shutdown completed');\n  }\n\n  // Utility methods\n  private hashText(text: string): string {\n    // Simple hash function for cache keys\n    let hash = 0;\n    for (let i = 0; i < text.length; i++) {\n      const char = text.charCodeAt(i);\n      hash = ((hash << 5) - hash) + char;\n      hash = hash & hash; // Convert to 32-bit integer\n    }\n    return Math.abs(hash).toString(36);\n  }\n\n  private hashAudio(audioBuffer: Buffer): string {\n    // Create a hash from audio buffer for caching\n    let hash = 0;\n    const step = Math.max(1, Math.floor(audioBuffer.length / 1000)); // Sample every nth byte\n    \n    for (let i = 0; i < audioBuffer.length; i += step) {\n      hash = ((hash << 5) - hash) + audioBuffer[i];\n      hash = hash & hash;\n    }\n    \n    return Math.abs(hash).toString(36);\n  }\n\n  // Public hash methods for external use\n  public createAudioHash(audioBuffer: Buffer): string {\n    return this.hashAudio(audioBuffer);\n  }\n\n  public createTextHash(text: string): string {\n    return this.hashText(text);\n  }\n\n  public createContextHash(context: any): string {\n    return this.hashText(JSON.stringify(context));\n  }\n}"
+        const audioBuffer = Buffer.from(l2Result, 'base64');
+        const entry: CacheEntry<Buffer> = {
+          data: audioBuffer,
+          timestamp: Date.now(),
+          accessCount: 1,
+          size: audioBuffer.length,
+        };
+        this.ttsCache.set(key, entry);
+        
+        return audioBuffer;
+      }
+    } catch (error) {
+      logger.warn({ error, key }, 'TTS L2 cache lookup failed');
+    }
+    
+    this.recordMiss('tts');
+    return null;
+  }
+
+  async setTtsAudio(text: string, audioBuffer: Buffer, voiceProfile?: string): Promise<void> {
+    if (!this.config.enabled) return;
+    
+    const key = this.keyBuilders.tts(text, voiceProfile);
+    const entry: CacheEntry<Buffer> = {
+      data: audioBuffer,
+      timestamp: Date.now(),
+      accessCount: 0,
+      size: audioBuffer.length,
+    };
+    
+    this.ttsCache.set(key, entry);
+    
+    // Store as base64 in Redis
+    const base64Audio = audioBuffer.toString('base64');
+    this.redis.set(key, base64Audio, this.config.ttl.ttsAudio).catch(error => {
+      logger.warn({ error, key }, 'Failed to store TTS audio in L2 cache');
+    });
+  }
+
+  // User Profile Cache Methods
+  async getUserProfile(userId: string): Promise<any | null> {
+    if (!this.config.enabled) return null;
+    
+    const key = this.keyBuilders.userProfile(userId);
+    
+    const l1Result = this.userProfileCache.get(key);
+    if (l1Result) {
+      this.recordHit('userProfile');
+      l1Result.accessCount++;
+      return l1Result.data;
+    }
+    
+    try {
+      const l2Result = await this.redis.get(key);
+      if (l2Result) {
+        this.recordHit('userProfile');
+        
+        const entry: CacheEntry<any> = {
+          data: l2Result,
+          timestamp: Date.now(),
+          accessCount: 1,
+          size: JSON.stringify(l2Result).length,
+        };
+        this.userProfileCache.set(key, entry);
+        
+        return l2Result;
+      }
+    } catch (error) {
+      logger.warn({ error, key }, 'User profile L2 cache lookup failed');
+    }
+    
+    this.recordMiss('userProfile');
+    return null;
+  }
+
+  async setUserProfile(userId: string, profile: any): Promise<void> {
+    if (!this.config.enabled) return;
+    
+    const key = this.keyBuilders.userProfile(userId);
+    const entry: CacheEntry<any> = {
+      data: profile,
+      timestamp: Date.now(),
+      accessCount: 0,
+      size: JSON.stringify(profile).length,
+    };
+    
+    this.userProfileCache.set(key, entry);
+    
+    this.redis.set(key, profile, this.config.ttl.userProfiles).catch(error => {
+      logger.warn({ error, key }, 'Failed to store user profile in L2 cache');
+    });
+  }
+
+  // Preloading and Warming Methods
+  async preloadCommonResponses(): Promise<void> {
+    if (!this.config.preloadingEnabled) return;
+    
+    const commonResponses = [
+      '您好，我现在不方便接听',
+      '谢谢，我不需要这个服务',
+      '我对您的产品不感兴趣',
+      '请不要再打电话给我',
+      '我已经有相关的服务了',
+      '现在不是合适的时候',
+      '我需要考虑一下',
+      '请发资料给我看看',
+    ];
+    
+    logger.info({ count: commonResponses.length }, 'Preloading common TTS responses');
+    
+    for (const response of commonResponses) {
+      const key = this.keyBuilders.tts(response);
+      if (!this.ttsCache.has(key)) {
+        this.preloadQueue.add(key);
+      }
+    }
+  }
+
+  async warmupCaches(): Promise<void> {
+    if (!this.config.preloadingEnabled) return;
+    
+    try {
+      // Preload common responses
+      await this.preloadCommonResponses();
+      
+      // Load frequently accessed user profiles
+      await this.preloadFrequentProfiles();
+      
+      logger.info({
+        preloadQueueSize: this.preloadQueue.size,
+      }, 'Cache warmup completed');
+      
+    } catch (error) {
+      logger.error({ error }, 'Cache warmup failed');
+    }
+  }
+
+  private async preloadFrequentProfiles(): Promise<void> {
+    try {
+      // Get list of frequently accessed user profiles from Redis
+      const frequentUsers = await this.redis.smembers('frequent_users');
+      
+      for (const userId of frequentUsers) {
+        const profile = await this.getUserProfile(userId);
+        if (profile) {
+          logger.debug({ userId }, 'Preloaded user profile');
+        }
+      }
+    } catch (error) {
+      logger.warn({ error }, 'Failed to preload frequent user profiles');
+    }
+  }
+
+  private startWarmupProcess(): void {
+    // Initial warmup
+    this.warmupCaches();
+    
+    // Periodic warmup every 30 minutes
+    this.warmupInterval = setInterval(() => {
+      this.warmupCaches();
+    }, 30 * 60 * 1000);
+  }
+
+  // Statistics and Monitoring
+  private recordHit(cacheType: string): void {
+    this.stats[cacheType].totalHits++;
+    this.updateHitRate(cacheType);
+  }
+
+  private recordMiss(cacheType: string): void {
+    this.stats[cacheType].totalMisses++;
+    this.updateHitRate(cacheType);
+  }
+
+  private updateHitRate(cacheType: string): void {
+    const stats = this.stats[cacheType];
+    const total = stats.totalHits + stats.totalMisses;
+    stats.hitRate = total > 0 ? stats.totalHits / total : 0;
+  }
+
+  public getCacheStats(): Record<string, CacheStats & { l1Size: number; l2Size?: number }> {
+    const result: Record<string, CacheStats & { l1Size: number; l2Size?: number }> = {};
+    
+    result.stt = { ...this.stats.stt, l1Size: this.sttCache.size };
+    result.intent = { ...this.stats.intent, l1Size: this.intentCache.size };
+    result.aiResponse = { ...this.stats.aiResponse, l1Size: this.aiResponseCache.size };
+    result.tts = { ...this.stats.tts, l1Size: this.ttsCache.size };
+    result.userProfile = { ...this.stats.userProfile, l1Size: this.userProfileCache.size };
+    
+    return result;
+  }
+
+  public getHealthStatus(): {
+    status: 'healthy' | 'degraded' | 'unhealthy';
+    details: any;
+  } {
+    const stats = this.getCacheStats();
+    const avgHitRate = Object.values(stats).reduce((sum, stat) => sum + stat.hitRate, 0) / Object.keys(stats).length;
+    
+    let status: 'healthy' | 'degraded' | 'unhealthy';
+    
+    if (avgHitRate > 0.7) {
+      status = 'healthy';
+    } else if (avgHitRate > 0.4) {
+      status = 'degraded';
+    } else {
+      status = 'unhealthy';
+    }
+    
+    return {
+      status,
+      details: {
+        averageHitRate: avgHitRate,
+        cacheStats: stats,
+        config: this.config,
+        uptime: Date.now() - (this.stats.stt?.totalHits + this.stats.stt?.totalMisses || 0),
+      },
+    };
+  }
+
+  // Cache Management
+  async invalidateCache(cacheType: string, pattern?: string): Promise<void> {
+    switch (cacheType) {
+      case 'stt':
+        this.sttCache.clear();
+        break;
+      case 'intent':
+        this.intentCache.clear();
+        break;
+      case 'aiResponse':
+        this.aiResponseCache.clear();
+        break;
+      case 'tts':
+        this.ttsCache.clear();
+        break;
+      case 'userProfile':
+        this.userProfileCache.clear();
+        break;
+      case 'all':
+        this.sttCache.clear();
+        this.intentCache.clear();
+        this.aiResponseCache.clear();
+        this.ttsCache.clear();
+        this.userProfileCache.clear();
+        break;
+    }
+    
+    logger.info({ cacheType, pattern }, 'Cache invalidated');
+  }
+
+  async shutdown(): Promise<void> {
+    if (this.warmupInterval) {
+      clearInterval(this.warmupInterval);
+      this.warmupInterval = undefined;
+    }
+    
+    // Clear all caches
+    await this.invalidateCache('all');
+    
+    logger.info('Cache Service shutdown completed');
+  }
+
+  // Utility methods
+  private hashText(text: string): string {
+    // Simple hash function for cache keys
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+      const char = text.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash).toString(36);
+  }
+
+  private hashAudio(audioBuffer: Buffer): string {
+    // Create a hash from audio buffer for caching
+    let hash = 0;
+    const step = Math.max(1, Math.floor(audioBuffer.length / 1000)); // Sample every nth byte
+    
+    for (let i = 0; i < audioBuffer.length; i += step) {
+      hash = ((hash << 5) - hash) + audioBuffer[i];
+      hash = hash & hash;
+    }
+    
+    return Math.abs(hash).toString(36);
+  }
+
+  // Public hash methods for external use
+  public createAudioHash(audioBuffer: Buffer): string {
+    return this.hashAudio(audioBuffer);
+  }
+
+  public createTextHash(text: string): string {
+    return this.hashText(text);
+  }
+
+  public createContextHash(context: any): string {
+    return this.hashText(JSON.stringify(context));
+  }
+}"

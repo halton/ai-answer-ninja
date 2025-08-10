@@ -68,8 +68,8 @@ services:
   # Core Services
   user-management-test:
     build:
-      context: .
-      dockerfile: services/user-management/Dockerfile
+      context: ./services/user-management
+      dockerfile: Dockerfile
       target: testing
       args:
         BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}

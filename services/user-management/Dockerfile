@@ -122,3 +122,24 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Start in development mode
 CMD ["npm", "run", "dev"]
+
+# ===========================================
+# Testing Stage
+# ===========================================
+FROM development AS testing
+
+# Install test dependencies and tools
+RUN npm install -g jest ts-node @types/jest
+
+# Copy test files
+COPY tests/ ./tests/ 2>/dev/null || true
+
+# Set test environment
+ENV NODE_ENV=test
+
+# Health check for testing
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:3005/health || exit 1
+
+# Start in test mode
+CMD ["npm", "run", "test"]

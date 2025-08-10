@@ -250,15 +250,25 @@ export class IntentRecognitionService {
     let contextInfo = '';
     if (context.previousIntents && context.previousIntents.length > 0) {
       const recentIntents = context.previousIntents.slice(-3).map(i => i.intent).join(', ');
-      contextInfo = `\n\n之前的意图：${recentIntents}`;
+      contextInfo = `
+
+之前的意图：${recentIntents}`;
     }
 
     if (context.conversationHistory && context.conversationHistory.length > 0) {
-      const recentHistory = context.conversationHistory.slice(-3).join('\n');
-      contextInfo += `\n\n对话历史：\n${recentHistory}`;
+      const recentHistory = context.conversationHistory.slice(-3).join('
+');
+      contextInfo += `
+
+对话历史：
+${recentHistory}`;
     }
 
-    return `${systemPrompt}${contextInfo}\n\n当前对话内容："${transcript}"\n\n请分析并返回JSON：`;
+    return `${systemPrompt}${contextInfo}
+
+当前对话内容："${transcript}"
+
+请分析并返回JSON：`;
   }
 
   private buildResponseGenerationPrompt(intent: IntentResult, context: ResponseContext): string {
@@ -296,8 +306,12 @@ export class IntentRecognitionService {
 
     let contextInfo = '';
     if (context.conversationHistory && context.conversationHistory.length > 0) {
-      const recentHistory = context.conversationHistory.slice(-5).join('\n');
-      contextInfo = `\n\n对话历史：\n${recentHistory}`;
+      const recentHistory = context.conversationHistory.slice(-5).join('
+');
+      contextInfo = `
+
+对话历史：
+${recentHistory}`;
     }
 
     const intentInfo = `
@@ -307,7 +321,11 @@ export class IntentRecognitionService {
 - 情绪：${intent.emotionalTone}
 - 置信度：${intent.confidence}`;
 
-    return `${systemPrompt}${contextInfo}${intentInfo}\n\n对方说："${context.transcript}"\n\n请生成应答并返回JSON：`;
+    return `${systemPrompt}${contextInfo}${intentInfo}
+
+对方说："${context.transcript}"
+
+请生成应答并返回JSON：`;
   }
 
   private async callAzureOpenAI(prompt: string, options: {
@@ -325,7 +343,9 @@ export class IntentRecognitionService {
           top_p: options.topP || 0.9,
           frequency_penalty: 0.2,
           presence_penalty: 0.1,
-          stop: ['\\n\\n', 'Human:', 'AI:'],
+          stop: ['\
+\
+', 'Human:', 'AI:'],
         },
         {
           headers: {
