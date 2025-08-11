@@ -1,0 +1,350 @@
+version: '3.8'
+
+services:
+  backup-system:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-ninja/backup-system:latest
+    container_name: ai-ninja-backup-system
+    restart: unless-stopped
+    
+    environment:
+      # 基础配置
+      NODE_ENV: production
+      LOG_LEVEL: info
+      
+      # 数据库配置
+      POSTGRES_HOST: ${POSTGRES_HOST:-localhost}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_ninja}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_ninja_db}
+      
+      # Redis配置
+      REDIS_HOST: ${REDIS_HOST:-localhost}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_SESSION_HOST: ${REDIS_SESSION_HOST:-localhost}
+      REDIS_SESSION_PORT: ${REDIS_SESSION_PORT:-6380}
+      REDIS_SESSION_PASSWORD: ${REDIS_SESSION_PASSWORD}
+      
+      # Azure存储配置
+      AZURE_STORAGE_ENDPOINT: ${AZURE_STORAGE_ENDPOINT}
+      AZURE_STORAGE_ACCOUNT: ${AZURE_STORAGE_ACCOUNT}
+      AZURE_STORAGE_KEY: ${AZURE_STORAGE_KEY}
+      BACKUP_BUCKET: ${BACKUP_BUCKET:-ai-ninja-backups}
+      
+      # 通知配置
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      DEVOPS_EMAIL: ${DEVOPS_EMAIL}
+      TECHLEAD_EMAIL: ${TECHLEAD_EMAIL}
+      ESCALATION_EMAIL: ${ESCALATION_EMAIL}
+      
+      # Webhook配置
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL}
+      WEBHOOK_TOKEN: ${WEBHOOK_TOKEN}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+      TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL}
+      
+      # 灾难恢复配置
+      PRIMARY_POSTGRES_ENDPOINT: ${PRIMARY_POSTGRES_ENDPOINT}
+      PRIMARY_REDIS_ENDPOINT: ${PRIMARY_REDIS_ENDPOINT}
+      SECONDARY_POSTGRES_ENDPOINT: ${SECONDARY_POSTGRES_ENDPOINT}
+      SECONDARY_REDIS_ENDPOINT: ${SECONDARY_REDIS_ENDPOINT}
+      BACKUP_POSTGRES_ENDPOINT: ${BACKUP_POSTGRES_ENDPOINT}
+      BACKUP_REDIS_ENDPOINT: ${BACKUP_REDIS_ENDPOINT}
+      
+      # 其他配置
+      STATUS_PAGE_URL: ${STATUS_PAGE_URL}
+      INCIDENT_API_URL: ${INCIDENT_API_URL}
+      SMS_API_KEY: ${SMS_API_KEY}
+      
+    ports:
+      - "8080:8080"  # 健康检查端口
+      - "9090:9090"  # 指标端口
+      
+    volumes:
+      # 备份存储卷
+      - backup_data:/opt/ai-ninja/backups
+      - backup_keys:/opt/ai-ninja/security/keys
+      - wal_archive:/opt/ai-ninja/wal-archive
+      - recovery_temp:/tmp/ai-ninja-recovery
+      - backup_logs:/var/log/ai-ninja-backup
+      
+      # 配置文件挂载(可选，用于配置覆盖)
+      - ./config/backup-system-config.json:/app/config/backup-system-config.json:ro
+      
+    networks:
+      - ai-ninja-network
+      - backup-network
+      
+    depends_on:
+      - postgresql
+      - redis
+      
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+        
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+          
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backup-health.rule=Host(`backup.ai-ninja.local`) && Path(`/health`)"
+      - "traefik.http.services.backup-health.loadbalancer.server.port=8080"
+      - "traefik.http.routers.backup-metrics.rule=Host(`backup.ai-ninja.local`) && Path(`/metrics`)"
+      - "traefik.http.services.backup-metrics.loadbalancer.server.port=9090"
+
+  # PostgreSQL数据库 (用于测试)
+  postgresql:
+    image: postgres:15-alpine
+    container_name: ai-ninja-postgres
+    restart: unless-stopped
+    
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ai_ninja_db}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_ninja}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_INITDB_ARGS: "--auth-host=md5 --auth-local=md5"
+      
+    ports:
+      - "5432:5432"
+      
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - postgres_wal:/var/lib/postgresql/wal
+      - ./config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      
+    networks:
+      - ai-ninja-network
+      - backup-network
+      
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_ninja} -d ${POSTGRES_DB:-ai_ninja_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      
+    command: >
+      postgres 
+      -c config_file=/etc/postgresql/postgresql.conf
+      -c archive_mode=on
+      -c archive_command='wal-g wal-push %p'
+      -c wal_level=replica
+      -c max_wal_senders=10
+      -c wal_keep_segments=32
+
+  # Redis缓存 (用于测试)
+  redis:
+    image: redis:7-alpine
+    container_name: ai-ninja-redis
+    restart: unless-stopped
+    
+    command: >
+      redis-server 
+      --appendonly yes 
+      --requirepass ${REDIS_PASSWORD:-password}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      
+    ports:
+      - "6379:6379"
+      
+    volumes:
+      - redis_data:/data
+      - redis_conf:/usr/local/etc/redis/redis.conf:ro
+      
+    networks:
+      - ai-ninja-network
+      - backup-network
+      
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Redis会话存储 (用于测试)
+  redis-session:
+    image: redis:7-alpine
+    container_name: ai-ninja-redis-session
+    restart: unless-stopped
+    
+    command: >
+      redis-server 
+      --port 6380
+      --requirepass ${REDIS_SESSION_PASSWORD:-password}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      
+    ports:
+      - "6380:6380"
+      
+    volumes:
+      - redis_session_data:/data
+      
+    networks:
+      - ai-ninja-network
+      - backup-network
+      
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # 监控工具 - Prometheus (可选)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ai-ninja-prometheus
+    restart: unless-stopped
+    
+    ports:
+      - "9091:9090"
+      
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+      
+    networks:
+      - backup-network
+      
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      
+    depends_on:
+      - backup-system
+
+  # 监控工具 - Grafana (可选)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ai-ninja-grafana
+    restart: unless-stopped
+    
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      
+    ports:
+      - "3000:3000"
+      
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      
+    networks:
+      - backup-network
+      
+    depends_on:
+      - prometheus
+
+volumes:
+  # 备份系统卷
+  backup_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${BACKUP_DATA_PATH:-./data/backups}
+      
+  backup_keys:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${BACKUP_KEYS_PATH:-./data/keys}
+      
+  wal_archive:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${WAL_ARCHIVE_PATH:-./data/wal-archive}
+      
+  recovery_temp:
+    driver: local
+    
+  backup_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${BACKUP_LOGS_PATH:-./logs}
+      
+  # 数据库卷
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${POSTGRES_DATA_PATH:-./data/postgres}
+      
+  postgres_wal:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${POSTGRES_WAL_PATH:-./data/postgres-wal}
+      
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${REDIS_DATA_PATH:-./data/redis}
+      
+  redis_session_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${REDIS_SESSION_DATA_PATH:-./data/redis-session}
+      
+  redis_conf:
+    driver: local
+    
+  # 监控卷
+  prometheus_data:
+    driver: local
+    
+  grafana_data:
+    driver: local
+
+networks:
+  ai-ninja-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          
+  backup-network:
+    driver: bridge
+    internal: false
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16

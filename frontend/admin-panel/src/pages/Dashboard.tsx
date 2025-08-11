@@ -1,5 +1,24 @@
-import React, { useEffect, useState } from 'react'
-import { Card, Row, Col, Statistic, Progress, List, Badge, Button, Space, Typography, Spin } from 'antd'
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
+import { 
+  Card, 
+  Row, 
+  Col, 
+  Statistic, 
+  Progress, 
+  List, 
+  Badge, 
+  Button, 
+  Space, 
+  Typography, 
+  Spin,
+  Alert,
+  Tooltip,
+  Tag,
+  Divider,
+  Grid,
+  Flex,
+  theme
+} from 'antd'
 import {
   PhoneOutlined,
   UserOutlined,
@@ -9,22 +28,63 @@ import {
   ArrowDownOutlined,
   ReloadOutlined,
   EyeOutlined,
+  ThunderboltOutlined,
+  CloudServerOutlined,
+  HeartOutlined,
+  WifiOutlined,
+  DisconnectOutlined,
+  ClockCircleOutlined,
+  TrophyOutlined,
+  WarningOutlined,
+  CheckCircleOutlined,
+  SyncOutlined,
+  LineChartOutlined,
+  DashboardOutlined,
+  FireOutlined,
+  BulbOutlined
 } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import { useNavigate } from 'react-router-dom'
 import { useWebSocket } from '@/services/websocket'
-import { useAuthStore } from '@/store'
+import { useAuthStore, useUIStore, useSystemStore } from '@/store'
 import dayjs from 'dayjs'
+import relativeTime from 'dayjs/plugin/relativeTime'
+
+dayjs.extend(relativeTime)
 
 const { Title, Text } = Typography
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate()
+  const { token: antdToken } = theme.useToken()
+  const { useBreakpoint } = Grid
+  const screens = useBreakpoint()
+  
   const { user } = useAuthStore()
-  const { connected, on, off } = useWebSocket()
+  const { 
+    darkMode, 
+    addNotification, 
+    setPageTitle,
+    isMobile,
+    isOnline 
+  } = useUIStore()
+  const {
+    systemHealth,
+    serviceList,
+    performanceMetrics,
+    fetchSystemHealth,
+    fetchPerformanceMetrics,
+    isLoadingHealth,
+    isLoadingMetrics
+  } = useSystemStore()
+  const { connected, socketId, on, off } = useWebSocket()
   
   const [loading, setLoading] = useState(true)
   const [realTimeData, setRealTimeData] = useState<any>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [autoRefresh, setAutoRefresh] = useState(true)
+  
+  // 仪表盘统计数据
   const [dashboardStats, setDashboardStats] = useState({
     totalUsers: 156,
     activeCalls: 12,
@@ -34,72 +94,187 @@ const Dashboard: React.FC = () => {
     activeUsersGrowth: -3.2,
     blockedCallsGrowth: 8.7,
     aiResponsesGrowth: 15.3,
-    // 新增性能指标
     averageResponseTime: 485,
     cacheHitRate: 87.3,
     systemHealth: 'excellent',
-    errorRate: 0.12
+    errorRate: 0.12,
+    uptime: 99.8,
+    satisfaction: 4.6
   })
 
-  const [performanceMetrics, setPerformanceMetrics] = useState({
+  // 实时性能指标
+  const [liveMetrics, setLiveMetrics] = useState({
     latency: {
-      total: 485,
-      preprocessing: 35,
-      stt: 145,
-      aiGeneration: 220,
-      tts: 85
+      current: 485,
+      target: 800,
+      trend: 'improving',
+      breakdown: {
+        preprocessing: 35,
+        stt: 145,
+        aiGeneration: 220,
+        tts: 85
+      }
     },
     throughput: {
       callsPerMinute: 2.3,
       messagesPerSecond: 45,
-      concurrentUsers: 28
+      concurrentUsers: 28,
+      peakConcurrent: 156
     },
     resources: {
       cpuUsage: 45,
       memoryUsage: 62,
       diskUsage: 34,
       networkLatency: 12
+    },
+    quality: {
+      audioQuality: 0.95,
+      recognitionAccuracy: 0.97,
+      responseRelevance: 0.89,
+      userSatisfaction: 0.92
     }
   })
+
+  // 设置页面标题
+  useEffect(() => {
+    setPageTitle('仪表盘')
+    return () => setPageTitle('')
+  }, [setPageTitle])
 
   // 初始化数据
   useEffect(() => {
     const initDashboard = async () => {
-      setLoading(true)
-      // 模拟加载数据
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      setLoading(false)
+      try {
+        setLoading(true)
+        
+        // 并行获取系统健康状态和性能指标
+        await Promise.all([
+          fetchSystemHealth(),
+          fetchPerformanceMetrics('1h')
+        ])
+        
+        // 模拟其他数据加载
+        await new Promise(resolve => setTimeout(resolve, 800))
+        
+        addNotification({
+          type: 'success',
+          title: '仪表盘加载完成',
+          message: '系统数据已更新',
+          duration: 3000
+        })
+        
+      } catch (error) {
+        addNotification({
+          type: 'error',
+          title: '数据加载失败',
+          message: '请检查网络连接并刷新页面',
+          duration: 0
+        })
+      } finally {
+        setLoading(false)
+      }
     }
 
     initDashboard()
-  }, [])
+  }, [fetchSystemHealth, fetchPerformanceMetrics, addNotification])
+
+  // 自动刷新数据
+  useEffect(() => {
+    if (!autoRefresh) return
+
+    const interval = setInterval(async () => {
+      try {
+        await Promise.all([
+          fetchSystemHealth(),
+          fetchPerformanceMetrics('1h')
+        ])
+        
+        // 模拟更新统计数据
+        setDashboardStats(prev => ({
+          ...prev,
+          activeCalls: Math.max(0, prev.activeCalls + Math.floor(Math.random() * 10 - 5)),
+          aiResponses: prev.aiResponses + Math.floor(Math.random() * 5),
+          averageResponseTime: 400 + Math.floor(Math.random() * 200)
+        }))
+        
+      } catch (error) {
+        console.error('Auto refresh failed:', error)
+      }
+    }, 30000) // 30秒刷新一次
+
+    return () => clearInterval(interval)
+  }, [autoRefresh, fetchSystemHealth, fetchPerformanceMetrics])
 
   // 监听实时数据更新
   useEffect(() => {
     const handleRealtimeUpdate = (data: any) => {
       setRealTimeData(data)
+      console.log('📊 Real-time update:', data)
     }
 
     const handleCallUpdate = (data: any) => {
-      console.log('Call update:', data)
+      console.log('📞 Call update:', data)
       // 更新通话统计
+      setDashboardStats(prev => ({
+        ...prev,
+        activeCalls: data.activeCalls || prev.activeCalls,
+        blockedCalls: data.blockedCalls || prev.blockedCalls
+      }))
     }
 
     const handleUserActivity = (data: any) => {
-      console.log('User activity:', data)
-      // 更新用户活动统计
+      console.log('👤 User activity:', data)
+      // 更新用户活动
     }
 
+    const handleMetricsUpdate = (data: any) => {
+      console.log('📈 Metrics update:', data)
+      setLiveMetrics(prev => ({
+        ...prev,
+        ...data
+      }))
+    }
+
+    // 注册事件监听器
     on('realtime_update', handleRealtimeUpdate)
-    on('call_update', handleCallUpdate)
+    on('call_update', handleCallUpdate) 
     on('user_activity', handleUserActivity)
+    on('metrics_update', handleMetricsUpdate)
 
     return () => {
       off('realtime_update', handleRealtimeUpdate)
       off('call_update', handleCallUpdate)
       off('user_activity', handleUserActivity)
+      off('metrics_update', handleMetricsUpdate)
     }
   }, [on, off])
+
+  // 手动刷新数据
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true)
+    try {
+      await Promise.all([
+        fetchSystemHealth(),
+        fetchPerformanceMetrics('1h')
+      ])
+      
+      addNotification({
+        type: 'success',
+        title: '数据已刷新',
+        message: '仪表盘数据已更新到最新状态',
+        duration: 2000
+      })
+    } catch (error) {
+      addNotification({
+        type: 'error',
+        title: '刷新失败',
+        message: '无法获取最新数据，请检查网络连接',
+        duration: 5000
+      })
+    } finally {
+      setRefreshing(false)
+    }
+  }, [fetchSystemHealth, fetchPerformanceMetrics, addNotification])
 
   // 统计卡片数据
   const statsCards = [

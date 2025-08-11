@@ -1,0 +1,39 @@
+{
+  "name": "@ai-ninja/performance-optimization",
+  "version": "1.0.0",
+  "description": "Advanced performance optimization suite for AI Answer Ninja",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest",
+    "benchmark": "node dist/benchmark/index.js"
+  },
+  "dependencies": {
+    "@types/node": "^20.10.0",
+    "ioredis": "^5.3.2",
+    "lru-cache": "^10.1.0",
+    "pg": "^8.11.3",
+    "pg-pool": "^3.6.1",
+    "pino": "^8.17.2",
+    "xxhash-wasm": "^1.0.2",
+    "zstd-codec": "^0.1.5",
+    "msgpackr": "^1.10.1",
+    "p-limit": "^5.0.0",
+    "p-queue": "^8.0.1",
+    "bull": "^4.12.0",
+    "node-cache": "^5.1.2",
+    "async-mutex": "^0.4.0",
+    "bloom-filters": "^3.0.1",
+    "ml-matrix": "^6.10.9",
+    "simple-statistics": "^7.8.3"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.11",
+    "@types/pg": "^8.10.9",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.3.3"
+  }
+}

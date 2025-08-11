@@ -1,0 +1,491 @@
+{
+  "environment": "production",
+  "postgresql": {
+    "database": {
+      "host": "${POSTGRES_HOST:-localhost}",
+      "port": "${POSTGRES_PORT:-5432}",
+      "username": "${POSTGRES_USER:-ai_ninja}",
+      "password": "${POSTGRES_PASSWORD}",
+      "database": "${POSTGRES_DB:-ai_ninja_db}",
+      "ssl": true
+    },
+    "storage": {
+      "type": "azure",
+      "endpoint": "${AZURE_STORAGE_ENDPOINT}",
+      "accessKey": "${AZURE_STORAGE_ACCOUNT}",
+      "secretKey": "${AZURE_STORAGE_KEY}",
+      "bucket": "${BACKUP_BUCKET:-ai-ninja-backups}",
+      "region": "eastasia"
+    },
+    "backup": {
+      "retentionDays": 30,
+      "compressionLevel": 6,
+      "encryptionEnabled": true,
+      "walArchiveTimeout": 300,
+      "maxParallelWorkers": 4
+    },
+    "monitoring": {
+      "alertOnFailure": true,
+      "alertOnLongDuration": true,
+      "maxDurationMinutes": 60
+    }
+  },
+  "redis": {
+    "instances": [
+      {
+        "name": "cache-master",
+        "host": "${REDIS_HOST:-localhost}",
+        "port": "${REDIS_PORT:-6379}",
+        "password": "${REDIS_PASSWORD}",
+        "db": 0,
+        "role": "master"
+      },
+      {
+        "name": "session-master",
+        "host": "${REDIS_SESSION_HOST:-localhost}",
+        "port": "${REDIS_SESSION_PORT:-6380}",
+        "password": "${REDIS_SESSION_PASSWORD}",
+        "db": 0,
+        "role": "master"
+      }
+    ],
+    "backupStrategy": "both",
+    "replicationCheck": true,
+    "backup": {
+      "localPath": "/opt/ai-ninja/backups/redis",
+      "remotePath": "redis-backups",
+      "compressionEnabled": true,
+      "encryptionEnabled": true,
+      "retentionDays": 30,
+      "maxBackupSize": 10240
+    },
+    "schedule": {
+      "rdbInterval": 240,
+      "aofInterval": 60,
+      "fullBackupHour": 2
+    },
+    "monitoring": {
+      "healthCheckInterval": 30,
+      "alertOnFailure": true,
+      "maxBackupDuration": 30
+    }
+  },
+  "encryption": {
+    "algorithm": "aes-256-gcm",
+    "keyDerivation": {
+      "iterations": 100000,
+      "saltLength": 32,
+      "keyLength": 32
+    },
+    "storage": {
+      "keyStorePath": "/opt/ai-ninja/security/keys",
+      "encryptedPath": "/opt/ai-ninja/backups/encrypted",
+      "metadataPath": "/opt/ai-ninja/backups/metadata"
+    },
+    "security": {
+      "keyRotationDays": 90,
+      "masterKeyEnabled": true,
+      "hsmEnabled": false
+    },
+    "compression": {
+      "enabled": true,
+      "level": 6
+    }
+  },
+  "scheduler": {
+    "schedule": {
+      "postgresql": {
+        "fullBackup": "0 2 * * 0",
+        "incrementalBackup": "0 2,8,14,20 * * *",
+        "walArchive": "*/5 * * * *"
+      },
+      "redis": {
+        "rdbBackup": "0 1,7,13,19 * * *",
+        "aofBackup": "0 */2 * * *",
+        "fullBackup": "0 3 * * 0"
+      }
+    },
+    "policies": {
+      "maxConcurrentBackups": 3,
+      "backupWindow": {
+        "start": "00:00",
+        "end": "06:00",
+        "timezone": "Asia/Shanghai"
+      },
+      "priority": {
+        "postgresql": 8,
+        "redis": 6
+      },
+      "retryPolicy": {
+        "maxRetries": 3,
+        "retryInterval": 15,
+        "exponentialBackoff": true
+      },
+      "loadBalancing": {
+        "checkSystemLoad": true,
+        "maxCpuUsage": 80,
+        "maxMemoryUsage": 85,
+        "maxDiskIO": 500
+      }
+    },
+    "notifications": {
+      "onSuccess": false,
+      "onFailure": true,
+      "onScheduleConflict": true,
+      "webhookUrl": "${BACKUP_WEBHOOK_URL}",
+      "emailRecipients": ["${ADMIN_EMAIL}"]
+    },
+    "maintenance": {
+      "cleanupSchedule": "0 4 * * 1",
+      "healthCheckInterval": 5,
+      "performanceOptimization": true
+    }
+  },
+  "recovery": {
+    "postgresql": {
+      "connectionString": "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}",
+      "dataDirectory": "/var/lib/postgresql/data",
+      "walDirectory": "/var/lib/postgresql/wal",
+      "recoveryTargetTimeline": "latest",
+      "maxRecoveryTime": 120
+    },
+    "redis": {
+      "instances": [
+        {
+          "name": "cache-master",
+          "host": "${REDIS_HOST:-localhost}",
+          "port": "${REDIS_PORT:-6379}",
+          "dataDirectory": "/var/lib/redis"
+        },
+        {
+          "name": "session-master",
+          "host": "${REDIS_SESSION_HOST:-localhost}",
+          "port": "${REDIS_SESSION_PORT:-6380}",
+          "dataDirectory": "/var/lib/redis-session"
+        }
+      ]
+    },
+    "storage": {
+      "backupPath": "/opt/ai-ninja/backups",
+      "tempPath": "/tmp/ai-ninja-recovery",
+      "walArchivePath": "/opt/ai-ninja/wal-archive"
+    },
+    "recovery": {
+      "enableParallelRecovery": true,
+      "maxParallelWorkers": 4,
+      "verifyRecovery": true,
+      "createRecoveryPoint": true
+    },
+    "validation": {
+      "checksumVerification": true,
+      "consistencyCheck": true,
+      "performanceTest": false
+    }
+  },
+  "validation": {
+    "verification": {
+      "checksumValidation": true,
+      "sizeValidation": true,
+      "formatValidation": true,
+      "contentValidation": true,
+      "encryptionValidation": true
+    },
+    "testing": {
+      "restoreTest": true,
+      "restoreTestFrequency": "weekly",
+      "maxTestDuration": 60,
+      "testEnvironment": {
+        "postgresql": {
+          "testDatabase": "ai_ninja_test",
+          "testInstance": "test-instance"
+        },
+        "redis": {
+          "testInstance": "redis-test"
+        }
+      }
+    },
+    "performance": {
+      "enableParallelValidation": true,
+      "maxConcurrentValidations": 2,
+      "validationTimeout": 30,
+      "lightweightMode": false
+    },
+    "reporting": {
+      "generateDetailedReport": true,
+      "reportRetentionDays": 90,
+      "notifyOnFailure": true,
+      "complianceReporting": true
+    },
+    "automation": {
+      "autoValidateNewBackups": true,
+      "autoRepairCorruptedBackups": false,
+      "quarantineFailedBackups": true
+    }
+  },
+  "monitoring": {
+    "metrics": {
+      "collectionInterval": 60,
+      "retentionPeriod": 30,
+      "aggregationWindows": [5, 15, 60, 1440]
+    },
+    "alerts": {
+      "channels": {
+        "email": {
+          "enabled": true,
+          "smtp": {
+            "host": "${SMTP_HOST:-smtp.gmail.com}",
+            "port": "${SMTP_PORT:-587}",
+            "secure": false,
+            "auth": {
+              "user": "${SMTP_USER}",
+              "pass": "${SMTP_PASSWORD}"
+            }
+          },
+          "recipients": ["${ADMIN_EMAIL}", "${DEVOPS_EMAIL}"]
+        },
+        "webhook": {
+          "enabled": true,
+          "url": "${ALERT_WEBHOOK_URL}",
+          "headers": {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer ${WEBHOOK_TOKEN}"
+          },
+          "retryAttempts": 3
+        },
+        "slack": {
+          "enabled": true,
+          "webhookUrl": "${SLACK_WEBHOOK_URL}",
+          "channel": "#ai-ninja-alerts"
+        },
+        "teams": {
+          "enabled": false,
+          "webhookUrl": "${TEAMS_WEBHOOK_URL}"
+        },
+        "sms": {
+          "enabled": false,
+          "apiKey": "${SMS_API_KEY}",
+          "recipients": ["${ADMIN_PHONE}"]
+        }
+      },
+      "rules": [
+        {
+          "name": "backup_failure",
+          "condition": "value < 1 AND name == 'backup_status'",
+          "severity": "high",
+          "throttle": 15,
+          "escalation": {
+            "enabled": true,
+            "after": 30,
+            "to": ["${ESCALATION_EMAIL}"]
+          }
+        },
+        {
+          "name": "high_backup_duration",
+          "condition": "value > 3600000 AND name == 'backup_duration'",
+          "severity": "medium",
+          "throttle": 60,
+          "escalation": {
+            "enabled": false,
+            "after": 60,
+            "to": []
+          }
+        },
+        {
+          "name": "system_overload",
+          "condition": "value > 90 AND name == 'system_cpu_usage'",
+          "severity": "medium",
+          "throttle": 30,
+          "escalation": {
+            "enabled": false,
+            "after": 30,
+            "to": []
+          }
+        },
+        {
+          "name": "storage_full",
+          "condition": "value > 85 AND name == 'disk_usage_percentage'",
+          "severity": "high",
+          "throttle": 30,
+          "escalation": {
+            "enabled": true,
+            "after": 60,
+            "to": ["${ESCALATION_EMAIL}"]
+          }
+        }
+      ]
+    },
+    "sla": {
+      "backupFrequency": {
+        "postgresql": {
+          "full": 168,
+          "incremental": 6
+        },
+        "redis": {
+          "rdb": 6,
+          "aof": 2
+        }
+      },
+      "recoveryTime": {
+        "rto": 60,
+        "rpo": 15
+      },
+      "availability": {
+        "target": 99.9,
+        "calculationPeriod": 30
+      }
+    },
+    "dashboard": {
+      "enabled": true,
+      "port": 3000,
+      "refreshInterval": 30
+    }
+  },
+  "disasterRecovery": {
+    "regions": [
+      {
+        "name": "primary-east",
+        "type": "primary",
+        "location": "Azure East Asia",
+        "priority": 1,
+        "endpoints": {
+          "postgresql": "${PRIMARY_POSTGRES_ENDPOINT}",
+          "redis": "${PRIMARY_REDIS_ENDPOINT}",
+          "storage": "${PRIMARY_STORAGE_ENDPOINT}",
+          "monitoring": "${PRIMARY_MONITORING_ENDPOINT}"
+        },
+        "capacity": {
+          "maxLoad": 100,
+          "estimatedRTO": 15,
+          "estimatedRPO": 5
+        },
+        "network": {
+          "latency": 0,
+          "bandwidth": 10000,
+          "reliability": 99.9
+        }
+      },
+      {
+        "name": "secondary-south",
+        "type": "secondary",
+        "location": "Azure Southeast Asia",
+        "priority": 2,
+        "endpoints": {
+          "postgresql": "${SECONDARY_POSTGRES_ENDPOINT}",
+          "redis": "${SECONDARY_REDIS_ENDPOINT}",
+          "storage": "${SECONDARY_STORAGE_ENDPOINT}",
+          "monitoring": "${SECONDARY_MONITORING_ENDPOINT}"
+        },
+        "capacity": {
+          "maxLoad": 80,
+          "estimatedRTO": 30,
+          "estimatedRPO": 10
+        },
+        "network": {
+          "latency": 50,
+          "bandwidth": 5000,
+          "reliability": 99.5
+        }
+      },
+      {
+        "name": "backup-central",
+        "type": "backup",
+        "location": "Azure Central US",
+        "priority": 3,
+        "endpoints": {
+          "postgresql": "${BACKUP_POSTGRES_ENDPOINT}",
+          "redis": "${BACKUP_REDIS_ENDPOINT}",
+          "storage": "${BACKUP_STORAGE_ENDPOINT}",
+          "monitoring": "${BACKUP_MONITORING_ENDPOINT}"
+        },
+        "capacity": {
+          "maxLoad": 60,
+          "estimatedRTO": 60,
+          "estimatedRPO": 30
+        },
+        "network": {
+          "latency": 150,
+          "bandwidth": 2000,
+          "reliability": 99.0
+        }
+      }
+    ],
+    "failover": {
+      "autoFailoverEnabled": true,
+      "failoverThreshold": {
+        "availability": 95,
+        "responseTime": 5000,
+        "errorRate": 10
+      },
+      "cooldownPeriod": 30,
+      "maxFailoversPerHour": 2
+    },
+    "replication": {
+      "method": "streaming",
+      "syncMode": "async",
+      "compressionEnabled": true,
+      "encryptionEnabled": true,
+      "maxReplicationLag": 60
+    },
+    "recovery": {
+      "recoveryLevels": [
+        {
+          "level": 1,
+          "name": "服务重启",
+          "services": ["application"],
+          "rto": 5,
+          "rpo": 1,
+          "autoTrigger": true
+        },
+        {
+          "level": 2,
+          "name": "数据库故障转移",
+          "services": ["postgresql", "redis"],
+          "rto": 15,
+          "rpo": 5,
+          "autoTrigger": true
+        },
+        {
+          "level": 3,
+          "name": "完整区域故障转移",
+          "services": ["postgresql", "redis", "application", "storage"],
+          "rto": 60,
+          "rpo": 30,
+          "autoTrigger": false
+        }
+      ],
+      "testSchedule": {
+        "frequency": "monthly",
+        "duration": 120,
+        "scope": "partial"
+      }
+    },
+    "communication": {
+      "stakeholders": [
+        {
+          "name": "System Administrator",
+          "role": "SysAdmin",
+          "email": "${ADMIN_EMAIL}",
+          "phone": "${ADMIN_PHONE}",
+          "escalationLevel": 1
+        },
+        {
+          "name": "DevOps Engineer",
+          "role": "DevOps",
+          "email": "${DEVOPS_EMAIL}",
+          "phone": "${DEVOPS_PHONE}",
+          "escalationLevel": 2
+        },
+        {
+          "name": "Technical Lead",
+          "role": "TechLead",
+          "email": "${TECHLEAD_EMAIL}",
+          "phone": "${TECHLEAD_PHONE}",
+          "escalationLevel": 3
+        }
+      ],
+      "notificationChannels": ["email", "slack", "webhook"],
+      "statusPageUrl": "${STATUS_PAGE_URL}",
+      "externalAPIs": ["${INCIDENT_API_URL}"]
+    }
+  }
+}

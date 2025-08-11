@@ -27,7 +27,9 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
 }) => {
   const { 
     notifications, 
+    unreadCount,
     markNotificationRead, 
+    removeNotification,
     clearAllNotifications 
   } = useUIStore()
 
@@ -66,8 +68,13 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
     }
   }
 
-  // 未读通知数量
-  const unreadCount = notifications.filter(n => !n.read).length
+  // 处理通知操作
+  const handleNotificationAction = (item: any) => {
+    if (item.action) {
+      item.action.handler()
+      markNotificationRead(item.id)
+    }
+  }
 
   return (
     <Drawer
@@ -161,20 +168,50 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({
                         {dayjs(item.timestamp).fromNow()}
                       </Text>
                       
-                      {!item.read && (
+                      <Space size="small">
+                        {/* 操作按钮 */}
+                        {item.action && (
+                          <Button
+                            type="link"
+                            size="small"
+                            style={{ fontSize: 12, padding: '0 4px' }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleNotificationAction(item)
+                            }}
+                          >
+                            {item.action.label}
+                          </Button>
+                        )}
+                        
+                        {/* 标记已读 */}
+                        {!item.read && (
+                          <Button
+                            type="link"
+                            size="small"
+                            icon={<CheckOutlined />}
+                            style={{ fontSize: 12, padding: '0 4px' }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              markNotificationRead(item.id)
+                            }}
+                          >
+                            标记已读
+                          </Button>
+                        )}
+                        
+                        {/* 删除通知 */}
                         <Button
                           type="link"
                           size="small"
-                          icon={<CheckOutlined />}
-                          style={{ fontSize: 12, padding: '0 4px' }}
+                          icon={<DeleteOutlined />}
+                          style={{ fontSize: 12, padding: '0 4px', color: '#f5222d' }}
                           onClick={(e) => {
                             e.stopPropagation()
-                            markNotificationRead(item.id)
+                            removeNotification(item.id)
                           }}
-                        >
-                          标记已读
-                        </Button>
-                      )}
+                        />
+                      </Space>
                     </div>
                   </div>
                 }
