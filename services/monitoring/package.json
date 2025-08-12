@@ -1,0 +1,63 @@
+{
+  "name": "@ai-answer-ninja/monitoring-service",
+  "version": "1.0.0",
+  "description": "统一监控服务 - 性能指标收集、健康检查、告警管理",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "nodemon --exec ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "compression": "^1.7.4",
+    "prom-client": "^15.1.0",
+    "node-cron": "^3.0.3",
+    "ioredis": "^5.3.2",
+    "pg": "^8.11.3",
+    "winston": "^3.11.0",
+    "winston-elasticsearch": "^0.17.4",
+    "@opentelemetry/api": "^1.7.0",
+    "@opentelemetry/sdk-node": "^0.45.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.40.3",
+    "@opentelemetry/exporter-prometheus": "^0.45.1",
+    "@opentelemetry/exporter-jaeger": "^1.18.1",
+    "alertmanager": "^1.0.0",
+    "node-fetch": "^3.3.2",
+    "zod": "^3.22.4",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/compression": "^1.7.5",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.10.9",
+    "@types/jest": "^29.5.8",
+    "typescript": "^5.3.2",
+    "ts-node": "^10.9.1",
+    "nodemon": "^3.0.2",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "eslint": "^8.54.0",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0"
+  },
+  "keywords": [
+    "monitoring",
+    "observability",
+    "metrics",
+    "tracing",
+    "logging",
+    "alerting"
+  ],
+  "author": "AI Answer Ninja Team",
+  "license": "MIT"
+}
