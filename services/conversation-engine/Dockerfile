@@ -1,26 +1,29 @@
 # Multi-stage build for production-ready conversation-engine service
 FROM python:3.11-slim as builder
 
-# Set environment variables
+# Set environment variables for optimal Python performance
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Update system and install dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    git \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Create virtual environment
-RUN python -m venv /opt/venv
+# Create virtual environment with optimization
+RUN python -m venv /opt/venv --upgrade-deps
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy requirements and install Python dependencies
-COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+# Copy requirements and install dependencies with caching
+COPY requirements.txt pyproject.toml* ./
+RUN pip install --upgrade pip wheel setuptools && \
+    pip install --no-deps -r requirements.txt
 
 # Production stage
 FROM python:3.11-slim as production

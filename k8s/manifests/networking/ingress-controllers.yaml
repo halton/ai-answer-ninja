@@ -1,0 +1,499 @@
+# =============================================================================
+# Ingress Controllers and Load Balancer Configuration
+# Production-ready networking with SSL termination and traffic routing
+# =============================================================================
+
+# =============================================================================
+# NGINX Ingress Controller Configuration
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-ninja-main-ingress
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: ingress
+  annotations:
+    # NGINX specific annotations
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    
+    # Rate limiting
+    nginx.ingress.kubernetes.io/rate-limit-connections: "100"
+    nginx.ingress.kubernetes.io/rate-limit-rps: "20"
+    nginx.ingress.kubernetes.io/rate-limit-burst-multiplier: "2"
+    
+    # Security headers
+    nginx.ingress.kubernetes.io/server-snippet: |
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'";
+    
+    # Enable CORS
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://admin.ai-ninja.com, https://app.ai-ninja.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization"
+    
+    # Load balancing
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    nginx.ingress.kubernetes.io/session-cookie-name: "ai-ninja-session"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "3600"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "3600"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/"
+    
+    # Health checks
+    nginx.ingress.kubernetes.io/health-check-path: "/health"
+    nginx.ingress.kubernetes.io/health-check-interval: "30s"
+    nginx.ingress.kubernetes.io/health-check-timeout: "10s"
+    
+    # Certificate management
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cert-manager.io/acme-challenge-type: "http01"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - api.ai-ninja.com
+    - ws.ai-ninja.com
+    - admin.ai-ninja.com
+    - app.ai-ninja.com
+    secretName: ai-ninja-tls-secret
+  rules:
+  # Main API Gateway
+  - host: api.ai-ninja.com
+    http:
+      paths:
+      # Phone Gateway routes
+      - path: /calls
+        pathType: Prefix
+        backend:
+          service:
+            name: phone-gateway-service
+            port:
+              number: 80
+      - path: /webhooks
+        pathType: Prefix
+        backend:
+          service:
+            name: phone-gateway-service
+            port:
+              number: 80
+      # User Management routes
+      - path: /auth
+        pathType: Prefix
+        backend:
+          service:
+            name: user-management-service
+            port:
+              number: 3005
+      - path: /users
+        pathType: Prefix
+        backend:
+          service:
+            name: user-management-service
+            port:
+              number: 3005
+      # Configuration routes
+      - path: /config
+        pathType: Prefix
+        backend:
+          service:
+            name: configuration-service
+            port:
+              number: 3007
+      # Storage routes
+      - path: /storage
+        pathType: Prefix
+        backend:
+          service:
+            name: storage-service
+            port:
+              number: 3008
+      # Analytics routes
+      - path: /analytics
+        pathType: Prefix
+        backend:
+          service:
+            name: profile-analytics-service
+            port:
+              number: 3004
+      # Whitelist routes
+      - path: /whitelist
+        pathType: Prefix
+        backend:
+          service:
+            name: smart-whitelist-service
+            port:
+              number: 3006
+      # Health check route
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: phone-gateway-service
+            port:
+              number: 80
+
+  # WebSocket endpoint for real-time processing
+  - host: ws.ai-ninja.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: realtime-processor-service
+            port:
+              number: 8080
+
+  # Admin panel
+  - host: admin.ai-ninja.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: admin-panel-service
+            port:
+              number: 80
+
+  # Main application
+  - host: app.ai-ninja.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: admin-panel-service
+            port:
+              number: 80
+
+---
+# =============================================================================
+# WebSocket Specific Ingress
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-ninja-websocket-ingress
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: websocket-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/server-snippet: |
+      location / {
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        proxy_buffering off;
+      }
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - ws.ai-ninja.com
+    secretName: ai-ninja-websocket-tls
+  rules:
+  - host: ws.ai-ninja.com
+    http:
+      paths:
+      - path: /ws
+        pathType: Prefix
+        backend:
+          service:
+            name: realtime-processor-service
+            port:
+              number: 8080
+      - path: /realtime
+        pathType: Prefix
+        backend:
+          service:
+            name: realtime-processor-service
+            port:
+              number: 8080
+
+---
+# =============================================================================
+# Monitoring and Observability Ingress
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-ninja-monitoring-ingress
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: monitoring-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: monitoring-basic-auth
+    nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - AI Ninja Monitoring'
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - monitoring.ai-ninja.com
+    - grafana.ai-ninja.com
+    - prometheus.ai-ninja.com
+    secretName: ai-ninja-monitoring-tls
+  rules:
+  # Prometheus
+  - host: prometheus.ai-ninja.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: prometheus-service
+            port:
+              number: 9090
+
+  # Grafana
+  - host: grafana.ai-ninja.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: grafana-service
+            port:
+              number: 3000
+
+  # Custom monitoring service
+  - host: monitoring.ai-ninja.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: monitoring-service
+            port:
+              number: 3009
+
+---
+# =============================================================================
+# TCP/UDP Load Balancer for Phone Services
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-ninja-phone-lb
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: phone-loadbalancer
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-type: "external"
+    service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: "/health"
+    service.beta.kubernetes.io/azure-load-balancer-tcp-idle-timeout: "30"
+spec:
+  type: LoadBalancer
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 300
+  selector:
+    app: phone-gateway
+    tier: core
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3001
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 3001
+    protocol: TCP
+  - name: sip-tcp
+    port: 5060
+    targetPort: 5060
+    protocol: TCP
+  - name: sip-udp
+    port: 5060
+    targetPort: 5060
+    protocol: UDP
+  - name: rtp-start
+    port: 10000
+    targetPort: 10000
+    protocol: UDP
+  - name: rtp-end
+    port: 20000
+    targetPort: 20000
+    protocol: UDP
+
+---
+# =============================================================================
+# Network Policies for Traffic Control
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-ninja-ingress-policy
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      tier: core
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3001
+    - protocol: TCP
+      port: 3002
+    - protocol: TCP
+      port: 8080
+  # Allow traffic from other core services
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: core
+    - podSelector:
+        matchLabels:
+          tier: support
+    - podSelector:
+        matchLabels:
+          tier: platform
+  # Allow traffic from monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 9090
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow external HTTPS traffic (for Azure services)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow traffic to other services
+  - to:
+    - podSelector: {}
+  # Allow traffic to databases
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+
+---
+# =============================================================================
+# Certificate Management
+# =============================================================================
+
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  labels:
+    app: ai-ninja
+    component: cert-manager
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@ai-ninja.com
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  labels:
+    app: ai-ninja
+    component: cert-manager
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: admin@ai-ninja.com
+    privateKeySecretRef:
+      name: letsencrypt-staging
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+
+---
+# =============================================================================
+# Basic Auth Secret for Monitoring
+# =============================================================================
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: monitoring-basic-auth
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: monitoring-auth
+type: Opaque
+data:
+  # admin:$2y$10$example... (bcrypt hash of password)
+  # Generate with: htpasswd -nb admin yourpassword | base64
+  auth: YWRtaW46JGFwcjEkSDY1dWhzZ1QkdENVeFNUaHBlbUg4U2hJMWZIQ3Y0LgoK # admin:admin123

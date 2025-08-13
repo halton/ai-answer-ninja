@@ -1,0 +1,650 @@
+# =============================================================================
+# Staging Docker Compose Configuration
+# Mirrors production with reduced resources and additional debugging capabilities
+# =============================================================================
+
+
+x-common-variables: &common-variables
+  NODE_ENV: staging
+  LOG_LEVEL: debug
+  ENABLE_METRICS: "true"
+  ENABLE_TRACING: "true"
+  ENABLE_DEBUG_ENDPOINTS: "true"
+
+x-restart-policy: &restart-policy
+  restart_policy:
+    condition: on-failure
+    delay: 3s
+    max_attempts: 5
+    window: 60s
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 20s
+  timeout: 8s
+  retries: 3
+  start_period: 20s
+
+x-security-opt: &security-opt
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  cap_add:
+    - NET_BIND_SERVICE
+
+x-resource-limits-small: &resource-limits-small
+  deploy:
+    resources:
+      limits:
+        cpus: '0.5'
+        memory: 512M
+      reservations:
+        cpus: '0.1'
+        memory: 128M
+
+x-resource-limits-medium: &resource-limits-medium
+  deploy:
+    resources:
+      limits:
+        cpus: '1.0'
+        memory: 1G
+      reservations:
+        cpus: '0.25'
+        memory: 256M
+
+x-resource-limits-large: &resource-limits-large
+  deploy:
+    resources:
+      limits:
+        cpus: '2.0'
+        memory: 2G
+      reservations:
+        cpus: '0.5'
+        memory: 512M
+
+services:
+  # ===========================================
+  # Core Services
+  # ===========================================
+  
+  phone-gateway:
+    build:
+      context: ./services/phone-gateway
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/phone-gateway:staging
+    container_name: ai-ninja-phone-gateway-staging
+    hostname: phone-gateway
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3001
+      AZURE_COMMUNICATION_CONNECTION_STRING: ${AZURE_COMMUNICATION_CONNECTION_STRING_STAGING}
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_STAGING}
+      USER_MANAGEMENT_URL: http://user-management:3005
+      WHITELIST_SERVICE_URL: http://smart-whitelist:3006
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-ninja-staging
+    volumes:
+      - phone-gateway-logs:/app/logs:rw
+      - phone-gateway-temp:/app/temp:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      <<: *healthcheck-defaults
+
+  realtime-processor:
+    build:
+      context: ./services/realtime-processor
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/realtime-processor:staging
+    container_name: ai-ninja-realtime-processor-staging
+    hostname: realtime-processor
+    <<: *security-opt
+    <<: *resource-limits-large
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3002
+      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY_STAGING}
+      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION}
+      AZURE_OPENAI_KEY: ${AZURE_OPENAI_KEY_STAGING}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT_STAGING}
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_STAGING}
+      CONVERSATION_ENGINE_URL: http://conversation-engine:3003
+    ports:
+      - "3002:3002"
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-ninja-staging
+    volumes:
+      - realtime-processor-logs:/app/logs:rw
+      - realtime-processor-audio:/app/audio:rw
+      - realtime-processor-cache:/app/cache:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      <<: *healthcheck-defaults
+
+  conversation-engine:
+    build:
+      context: ./services/conversation-engine
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/conversation-engine:staging
+    container_name: ai-ninja-conversation-engine-staging
+    hostname: conversation-engine
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3003
+      AZURE_OPENAI_KEY: ${AZURE_OPENAI_KEY_STAGING}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT_STAGING}
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_STAGING}
+      PROFILE_ANALYTICS_URL: http://profile-analytics:3004
+    ports:
+      - "3003:3003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-ninja-staging
+    volumes:
+      - conversation-engine-logs:/app/logs:rw
+      - conversation-engine-models:/app/ml/models:rw
+      - conversation-engine-cache:/app/cache:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      <<: *healthcheck-defaults
+
+  profile-analytics:
+    build:
+      context: ./services/profile-analytics
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/profile-analytics:staging
+    container_name: ai-ninja-profile-analytics-staging
+    hostname: profile-analytics
+    <<: *security-opt
+    <<: *resource-limits-large
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3004
+      AZURE_TEXT_ANALYTICS_KEY: ${AZURE_TEXT_ANALYTICS_KEY_STAGING}
+      AZURE_TEXT_ANALYTICS_ENDPOINT: ${AZURE_TEXT_ANALYTICS_ENDPOINT_STAGING}
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_STAGING}
+    ports:
+      - "3004:3004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-ninja-staging
+    volumes:
+      - profile-analytics-logs:/app/logs:rw
+      - profile-analytics-models:/app/ml/models:rw
+      - profile-analytics-data:/app/data:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      <<: *healthcheck-defaults
+
+  # ===========================================
+  # Support Services
+  # ===========================================
+
+  user-management:
+    build:
+      context: ./services/user-management
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/user-management:staging
+    container_name: ai-ninja-user-management-staging
+    hostname: user-management
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3005
+      JWT_SECRET: ${JWT_SECRET_STAGING}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-4h}
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_STAGING}
+      SMTP_HOST: ${SMTP_HOST_STAGING}
+      SMTP_PORT: ${SMTP_PORT_STAGING}
+      SMTP_USER: ${SMTP_USER_STAGING}
+      SMTP_PASS: ${SMTP_PASS_STAGING}
+    ports:
+      - "3005:3005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-ninja-staging
+    volumes:
+      - user-management-logs:/app/logs:rw
+      - user-management-uploads:/app/uploads:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      <<: *healthcheck-defaults
+
+  smart-whitelist:
+    build:
+      context: ./services/smart-whitelist-node
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/smart-whitelist:staging
+    container_name: ai-ninja-smart-whitelist-staging
+    hostname: smart-whitelist
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3006
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_STAGING}
+    ports:
+      - "3006:3006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-ninja-staging
+    volumes:
+      - smart-whitelist-logs:/app/logs:rw
+      - smart-whitelist-cache:/app/cache:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+      <<: *healthcheck-defaults
+
+  # ===========================================
+  # Platform Services
+  # ===========================================
+
+  configuration:
+    build:
+      context: ./services/configuration-service
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/configuration:staging
+    container_name: ai-ninja-configuration-staging
+    hostname: configuration
+    <<: *security-opt
+    <<: *resource-limits-small
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3007
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_STAGING}
+    ports:
+      - "3007:3007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-ninja-staging
+    volumes:
+      - configuration-logs:/app/logs:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
+      <<: *healthcheck-defaults
+
+  storage:
+    build:
+      context: ./services/storage
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/storage:staging
+    container_name: ai-ninja-storage-staging
+    hostname: storage
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3008
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_STAGING}
+      AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING_STAGING}
+    ports:
+      - "3008:3008"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-ninja-staging
+    volumes:
+      - storage-logs:/app/logs:rw
+      - storage-data:/app/data:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3008/health"]
+      <<: *healthcheck-defaults
+
+  monitoring:
+    build:
+      context: ./services/monitoring
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/monitoring:staging
+    container_name: ai-ninja-monitoring-staging
+    hostname: monitoring
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3009
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL_STAGING}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL_STAGING}
+      PROMETHEUS_URL: http://prometheus:9090
+      GRAFANA_URL: http://grafana:3000
+    ports:
+      - "3009:3009"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+    networks:
+      - ai-ninja-staging
+      - monitoring-staging
+    volumes:
+      - monitoring-logs:/app/logs:rw
+      - monitoring-metrics:/app/metrics:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3009/health"]
+      <<: *healthcheck-defaults
+
+  # ===========================================
+  # Frontend
+  # ===========================================
+
+  admin-panel:
+    build:
+      context: ./frontend/admin-panel
+      dockerfile: Dockerfile.optimized
+      target: production
+      args:
+        - REACT_APP_API_BASE_URL=http://localhost:3001
+        - REACT_APP_WS_URL=ws://localhost:3002
+        - REACT_APP_ENV=staging
+    image: ai-ninja/admin-panel:staging
+    container_name: ai-ninja-admin-panel-staging
+    hostname: admin-panel
+    <<: *security-opt
+    <<: *resource-limits-small
+    <<: *restart-policy
+    ports:
+      - "80:80"
+    depends_on:
+      - phone-gateway
+      - user-management
+    networks:
+      - ai-ninja-staging
+    volumes:
+      - admin-panel-logs:/var/log/nginx:rw
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      <<: *healthcheck-defaults
+
+  # ===========================================
+  # Data Layer
+  # ===========================================
+
+  postgres:
+    image: postgres:15.5-alpine
+    container_name: ai-ninja-postgres-staging
+    hostname: postgres
+    <<: *security-opt
+    <<: *resource-limits-large
+    <<: *restart-policy
+    environment:
+      POSTGRES_DB: ai_ninja_staging
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_STAGING}
+      PGUSER: postgres
+    ports:
+      - "5432:5432"
+    networks:
+      - ai-ninja-staging
+    volumes:
+      - postgres-data:/var/lib/postgresql/data:rw
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+      - ./database/backups:/backups:rw
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_ninja_staging"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c max_connections=100
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: ai-ninja-redis-staging
+    hostname: redis
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD_STAGING}
+    ports:
+      - "6379:6379"
+    networks:
+      - ai-ninja-staging
+    volumes:
+      - redis-data:/data:rw
+      - ./config/redis/redis-staging.conf:/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    command: redis-server /etc/redis/redis.conf
+
+  # ===========================================
+  # Monitoring Stack
+  # ===========================================
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: ai-ninja-prometheus-staging
+    hostname: prometheus
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring-staging
+      - ai-ninja-staging
+    volumes:
+      - prometheus-data:/prometheus:rw
+      - ./monitoring/prometheus/prometheus-staging.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerting/rules:/etc/prometheus/rules:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: ai-ninja-grafana-staging
+    hostname: grafana
+    <<: *security-opt
+    <<: *resource-limits-small
+    <<: *restart-policy
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD_STAGING}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_INSTALL_PLUGINS: grafana-piechart-panel,grafana-worldmap-panel
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring-staging
+    volumes:
+      - grafana-data:/var/lib/grafana:rw
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # Testing & Development Tools
+  # ===========================================
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.50
+    container_name: ai-ninja-jaeger-staging
+    hostname: jaeger
+    <<: *resource-limits-small
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # Collector HTTP
+    networks:
+      - monitoring-staging
+
+# ===========================================
+# Networks
+# ===========================================
+
+networks:
+  ai-ninja-staging:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/16
+          gateway: 172.22.0.1
+
+  monitoring-staging:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.23.0.0/16
+          gateway: 172.23.0.1
+
+# ===========================================
+# Volumes
+# ===========================================
+
+volumes:
+  # Database volumes
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+
+  # Monitoring volumes
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+  # Service logs
+  phone-gateway-logs:
+    driver: local
+  realtime-processor-logs:
+    driver: local
+  conversation-engine-logs:
+    driver: local
+  profile-analytics-logs:
+    driver: local
+  user-management-logs:
+    driver: local
+  smart-whitelist-logs:
+    driver: local
+  configuration-logs:
+    driver: local
+  storage-logs:
+    driver: local
+  monitoring-logs:
+    driver: local
+  admin-panel-logs:
+    driver: local
+
+  # Service data
+  phone-gateway-temp:
+    driver: local
+  realtime-processor-audio:
+    driver: local
+  realtime-processor-cache:
+    driver: local
+  conversation-engine-models:
+    driver: local
+  conversation-engine-cache:
+    driver: local
+  profile-analytics-models:
+    driver: local
+  profile-analytics-data:
+    driver: local
+  user-management-uploads:
+    driver: local
+  smart-whitelist-cache:
+    driver: local
+  storage-data:
+    driver: local
+  monitoring-metrics:
+    driver: local

@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-ninja
+  labels:
+    app.kubernetes.io/name: ai-ninja
+    app.kubernetes.io/version: "1.0.0"
+    environment: production
+    istio-injection: enabled
+  annotations:
+    description: "AI Answer Ninja - Smart Phone Call Answering System"
+---
+# Resource quotas for namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ai-ninja-quota
+  namespace: ai-ninja
+spec:
+  hard:
+    # Compute resources
+    requests.cpu: "10"
+    requests.memory: "20Gi" 
+    limits.cpu: "20"
+    limits.memory: "40Gi"
+    
+    # Storage
+    persistentvolumeclaims: "10"
+    requests.storage: "100Gi"
+    
+    # Objects
+    pods: "50"
+    services: "20"
+    secrets: "20"
+    configmaps: "20"
+    replicationcontrollers: "0"
+    
+---
+# Limit ranges for pods in namespace
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ai-ninja-limits
+  namespace: ai-ninja
+spec:
+  limits:
+  - default:
+      cpu: "500m"
+      memory: "1Gi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "256Mi"
+    max:
+      cpu: "2"
+      memory: "4Gi"
+    min:
+      cpu: "50m" 
+      memory: "128Mi"
+    type: Container
+  - default:
+      storage: "10Gi"
+    max:
+      storage: "50Gi"
+    min:
+      storage: "1Gi"
+    type: PersistentVolumeClaim

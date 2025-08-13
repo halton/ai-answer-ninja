@@ -69,17 +69,17 @@ class AudioPreprocessor {
     this.noiseReduction = new NoiseReduction();
     this.vadDetector = new VoiceActivityDetector();
   }
-  
+
   async process(audioChunk) {
     // 回声消除
     const echoFreeAudio = await this.echoCancellation.process(audioChunk);
-    
+
     // 噪声降低
     const cleanAudio = await this.noiseReduction.process(echoFreeAudio);
-    
+
     // 语音活动检测
     const vadResult = await this.vadDetector.detect(cleanAudio);
-    
+
     return {
       audio: cleanAudio,
       isSpeech: vadResult.isSpeech,
@@ -98,26 +98,26 @@ class StreamingSTT {
       region: process.env.AZURE_SPEECH_REGION,
       language: 'zh-CN'
     });
-    
+
     this.buffer = new AudioBuffer();
     this.isRecognizing = false;
   }
-  
+
   async processAudioStream(audioData) {
     // 累积音频直到检测到语音结束
     this.buffer.append(audioData);
-    
+
     if (this.vadDetector.isEndOfSpeech(audioData)) {
       return await this.recognizeBufferedAudio();
     }
-    
+
     return null; // 继续积累
   }
-  
+
   async recognizeBufferedAudio() {
     const result = await this.recognizer.recognizeOnceAsync(this.buffer.getAudioData());
     this.buffer.clear();
-    
+
     return {
       text: result.text,
       confidence: result.confidence,
@@ -135,7 +135,7 @@ class ResponseCache {
     this.precomputedResponses = new Map();
     this.initializeCommonResponses();
   }
-  
+
   initializeCommonResponses() {
     // 预生成常见骚扰类型的回复
     const commonScenarios = [
@@ -143,26 +143,26 @@ class ResponseCache {
       { intent: 'loan_offer', response: '我不需要贷款服务' },
       { intent: 'investment', response: '我对投资不感兴趣' }
     ];
-    
+
     commonScenarios.forEach(async scenario => {
       const audioResponse = await this.ttsService.synthesize(scenario.response);
       this.precomputedResponses.set(scenario.intent, audioResponse);
     });
   }
-  
+
   async getResponse(intent, context) {
     const cacheKey = `${intent}_${context.userId}`;
-    
+
     // 检查预计算缓存
     if (this.precomputedResponses.has(intent)) {
       return this.precomputedResponses.get(intent);
     }
-    
+
     // 检查上下文缓存
     if (this.cache.has(cacheKey)) {
       return this.cache.get(cacheKey);
     }
-    
+
     return null; // 需要实时生成
   }
 }
@@ -179,9 +179,9 @@ class ParallelProcessor {
       this.conversationContext.getRecentHistory(callContext.callId),
       this.whitelistService.checkCached(callContext.userId, callContext.callerPhone)
     ]);
-    
+
     const [sttResult, userProfile, conversationHistory, whitelistCheck] = tasks;
-    
+
     if (sttResult.status === 'fulfilled' && sttResult.value) {
       return await this.generateResponse({
         transcript: sttResult.value,
@@ -191,7 +191,7 @@ class ParallelProcessor {
         callContext
       });
     }
-    
+
     return null;
   }
 }
@@ -204,16 +204,16 @@ class AdaptiveAudioEncoder {
     this.codecPriority = ['opus', 'aac', 'mp3'];
     this.networkMonitor = new NetworkQualityMonitor();
   }
-  
+
   async encodeAudio(audioData, targetBitrate) {
     const networkQuality = await this.networkMonitor.getCurrentQuality();
-    
-    // 根据网络质量调整编码参数  
+
+    // 根据网络质量调整编码参数
     const encodingConfig = this.getOptimalConfig(networkQuality, targetBitrate);
-    
+
     return await this.encode(audioData, encodingConfig);
   }
-  
+
   getOptimalConfig(networkQuality, targetBitrate) {
     if (networkQuality < 0.3) {
       return { codec: 'opus', bitrate: Math.min(targetBitrate, 32000) };
@@ -237,7 +237,7 @@ class AdaptiveAudioEncoder {
   sequenceNumber: 123
 }
 
-// 服务器 -> 客户端消息格式  
+// 服务器 -> 客户端消息格式
 {
   type: 'ai_response',
   callId: 'uuid',
@@ -253,7 +253,7 @@ class AdaptiveAudioEncoder {
 ```yaml
 关键延迟指标:
   - audio_to_text_latency: < 200ms (P95)
-  - intent_recognition_latency: < 100ms (P95)  
+  - intent_recognition_latency: < 100ms (P95)
   - ai_generation_latency: < 300ms (P95)
   - text_to_speech_latency: < 200ms (P95)
   - total_pipeline_latency: < 800ms (P95)
@@ -391,12 +391,12 @@ GET  /monitoring/traces/{id}     # 链路追踪
 #### 优化后的服务间通信架构
 ```yaml
 # 分层通信架构
-API Gateway (Kong/nginx) 
+API Gateway (Kong/nginx)
     ↓
 Core Services (核心业务逻辑)
     ↓
 Support Services (业务支撑)
-    ↓  
+    ↓
 Platform Services (基础设施)
 
 # 异步通信 (事件驱动)
@@ -407,7 +407,7 @@ Message Queue (Redis Streams):
     - conversation.ended     # 对话结束
     - profile.updated        # 画像更新
     - security.alert         # 安全告警
-    
+
 # 同步通信 (服务网格)
 Service Mesh (Istio/Consul Connect):
   - 服务发现和负载均衡
@@ -452,7 +452,7 @@ class IntentClassifier {
     this.contextAnalyzer = new ContextAnalyzer();
     this.confidenceThreshold = 0.7;
   }
-  
+
   async classifyIntent(transcript, context) {
     // 多层次意图识别
     const results = await Promise.all([
@@ -460,10 +460,10 @@ class IntentClassifier {
       this.semanticClassification(transcript),
       this.contextualClassification(transcript, context)
     ]);
-    
+
     // 融合多种分类结果
     const fusedResult = await this.fuseClassificationResults(results);
-    
+
     return {
       intent: fusedResult.intent,
       confidence: fusedResult.confidence,
@@ -471,7 +471,7 @@ class IntentClassifier {
       emotionalTone: fusedResult.emotionalTone
     };
   }
-  
+
   keywordBasedClassification(text) {
     const patterns = {
       'sales_call': {
@@ -491,10 +491,10 @@ class IntentClassifier {
         weight: 0.25
       }
     };
-    
+
     let maxScore = 0;
     let predictedIntent = 'unknown';
-    
+
     Object.entries(patterns).forEach(([intent, config]) => {
       const score = this.calculateKeywordScore(text, config.keywords) * config.weight;
       if (score > maxScore) {
@@ -502,26 +502,26 @@ class IntentClassifier {
         predictedIntent = intent;
       }
     });
-    
+
     return { intent: predictedIntent, confidence: maxScore };
   }
-  
+
   async semanticClassification(text) {
     // 使用预训练的语义分类模型
     const embedding = await this.getTextEmbedding(text);
     const prediction = await this.intentModel.predict(embedding);
-    
+
     return {
       intent: prediction.label,
       confidence: prediction.confidence
     };
   }
-  
+
   contextualClassification(text, context) {
     // 基于历史对话上下文调整分类
     const contextWeight = this.calculateContextWeight(context);
     const priorIntents = context.recentIntents || [];
-    
+
     // 如果最近的意图一致，增加置信度
     if (priorIntents.length > 0) {
       const lastIntent = priorIntents[priorIntents.length - 1];
@@ -531,7 +531,7 @@ class IntentClassifier {
         contextInfluenced: true
       };
     }
-    
+
     return { intent: 'unknown', confidence: 0.0 };
   }
 }
@@ -545,20 +545,20 @@ class ConversationManager {
     this.responseSelector = new ResponseSelector();
     this.personalityAdapter = new PersonalityAdapter();
   }
-  
+
   async manageConversation(input, userId, callId) {
     // 获取当前对话状态
     const currentState = await this.dialogueStateTracker.getState(callId);
-    
+
     // 更新对话状态
     const newState = await this.updateDialogueState(currentState, input);
-    
+
     // 基于状态和用户画像生成响应策略
     const responseStrategy = await this.determineResponseStrategy(newState, userId);
-    
+
     // 生成个性化回复
     const response = await this.generatePersonalizedResponse(responseStrategy, userId);
-    
+
     return {
       response: response.text,
       audioResponse: response.audio,
@@ -566,7 +566,7 @@ class ConversationManager {
       shouldTerminate: response.shouldTerminate
     };
   }
-  
+
   async updateDialogueState(currentState, input) {
     const stateTransitionRules = {
       'initial': {
@@ -584,9 +584,9 @@ class ConversationManager {
         'goodbye': 'call_end'
       }
     };
-    
+
     const newState = stateTransitionRules[currentState.stage]?.[input.intent] || currentState.stage;
-    
+
     return {
       ...currentState,
       stage: newState,
@@ -595,10 +595,10 @@ class ConversationManager {
       timestamp: Date.now()
     };
   }
-  
+
   async determineResponseStrategy(state, userId) {
     const userProfile = await this.getUserProfile(userId);
-    
+
     // 基于对话阶段和用户个性确定策略
     const strategies = {
       'initial': {
@@ -615,7 +615,7 @@ class ConversationManager {
         'any': 'final_warning'
       }
     };
-    
+
     const personalityType = userProfile?.personality || 'polite';
     return strategies[state.stage]?.[personalityType] || 'default_response';
   }
@@ -630,11 +630,11 @@ class PersonalizedResponseGenerator {
     this.azureOpenAI = new AzureOpenAIClient();
     this.emotionController = new EmotionController();
   }
-  
+
   async generateResponse(strategy, context, userProfile) {
     // 构建个性化提示词
     const prompt = this.buildPersonalizedPrompt(strategy, context, userProfile);
-    
+
     // 生成基础回复
     const baseResponse = await this.azureOpenAI.complete({
       prompt,
@@ -645,23 +645,23 @@ class PersonalizedResponseGenerator {
     
     // 应用个性化调整
     const personalizedResponse = await this.applyPersonalityFilters(
-      baseResponse, 
+      baseResponse,
       userProfile
     );
-    
+
     // 情感和语调控制
     const emotionallyAdjustedResponse = await this.adjustEmotionalTone(
       personalizedResponse,
       context.emotionalState
     );
-    
+
     return {
       text: emotionallyAdjustedResponse,
       shouldTerminate: this.shouldTerminateCall(strategy),
       confidence: this.calculateResponseConfidence(emotionallyAdjustedResponse)
     };
   }
-  
+
   buildPersonalizedPrompt(strategy, context, userProfile) {
     const basePrompt = `
 你是${userProfile.name}，正在接听一个${context.spamCategory}类型的骚扰电话。
@@ -678,10 +678,10 @@ ${context.conversationHistory}
 
 请生成一个${this.getResponseLength(strategy)}的自然回复，体现你的个性特征：
 `;
-    
+
     return basePrompt;
   }
-  
+
   async applyPersonalityFilters(response, userProfile) {
     const filters = {
       'polite': (text) => this.ensurePoliteness(text),
@@ -689,11 +689,11 @@ ${context.conversationHistory}
       'humorous': (text) => this.addHumor(text),
       'professional': (text) => this.addProfessionalTone(text)
     };
-    
+
     const filter = filters[userProfile.personality] || filters['polite'];
     return await filter(response);
   }
-  
+
   ensurePoliteness(text) {
     // 确保回复礼貌
     const politePatterns = {
@@ -701,12 +701,12 @@ ${context.conversationHistory}
       '不想': '暂时不考虑',
       '没兴趣': '不太感兴趣'
     };
-    
+
     let politeText = text;
     Object.entries(politePatterns).forEach(([harsh, polite]) => {
       politeText = politeText.replace(new RegExp(harsh, 'g'), polite);
     });
-    
+
     return politeText;
   }
 }
@@ -725,7 +725,7 @@ class CallTerminationManager {
       frustrationLevel: 0.9
     };
   }
-  
+
   async shouldTerminateCall(context, currentResponse) {
     const terminationReasons = await Promise.all([
       this.checkTurnLimit(context),
@@ -734,10 +734,10 @@ class CallTerminationManager {
       this.checkFrustrationLevel(context),
       this.checkResponseEffectiveness(currentResponse)
     ]);
-    
+
     const shouldTerminate = terminationReasons.some(reason => reason.terminate);
     const reason = terminationReasons.find(r => r.terminate)?.reason || null;
-    
+
     if (shouldTerminate) {
       return {
         terminate: true,
@@ -745,22 +745,22 @@ class CallTerminationManager {
         finalResponse: await this.generateFinalResponse(reason, context)
       };
     }
-    
+
     return { terminate: false };
   }
-  
+
   async checkPersistenceLevel(context) {
     const persistenceScore = await this.persistenceDetector.analyze(
       context.conversationHistory
     );
-    
+
     return {
       terminate: persistenceScore > this.terminationThresholds.persistenceScore,
       reason: 'excessive_persistence',
       score: persistenceScore
     };
   }
-  
+
   async generateFinalResponse(reason, context) {
     const finalResponses = {
       'excessive_persistence': '我已经说得很清楚了，请不要再打扰我。再见。',
@@ -768,7 +768,7 @@ class CallTerminationManager {
       'ineffective_responses': '看来我们的对话没有什么意义，就此结束吧。',
       'high_frustration': '我觉得这个对话没有必要继续下去了。'
     };
-    
+
     return finalResponses[reason] || '好的，再见。';
   }
 }
@@ -782,21 +782,21 @@ class ConversationLearningSystem {
     this.patternRecognizer = new PatternRecognizer();
     this.strategyOptimizer = new StrategyOptimizer();
   }
-  
+
   async learnFromConversation(callRecord) {
     // 分析对话效果
     const effectiveness = await this.analyzeConversationEffectiveness(callRecord);
-    
+
     // 识别成功/失败的模式
     const patterns = await this.extractConversationPatterns(callRecord);
-    
+
     // 更新响应策略
     await this.updateResponseStrategies(patterns, effectiveness);
-    
+
     // 优化意图识别模型
     await this.improveIntentRecognition(callRecord);
   }
-  
+
   async analyzeConversationEffectiveness(callRecord) {
     const metrics = {
       callDuration: callRecord.durationSeconds,
@@ -805,24 +805,24 @@ class ConversationLearningSystem {
       callerPersistence: this.measurePersistence(callRecord.conversations),
       responseCoherence: await this.measureCoherence(callRecord.conversations)
     };
-    
+
     // 计算综合效果分数
     const effectivenessScore = this.calculateEffectivenessScore(metrics);
-    
+
     return {
       score: effectivenessScore,
       metrics,
       successful: effectivenessScore > 0.7
     };
   }
-  
+
   calculateEffectivenessScore(metrics) {
     // 短时间、少回合、自然终止 = 高效
     const durationScore = Math.max(0, 1 - metrics.callDuration / 180);
     const turnScore = Math.max(0, 1 - metrics.turnCount / 10);
     const terminationScore = metrics.terminationReason === 'caller_hangup' ? 1 : 0.5;
     const coherenceScore = metrics.responseCoherence;
-    
+
     return (durationScore * 0.3 + turnScore * 0.3 + terminationScore * 0.2 + coherenceScore * 0.2);
   }
 }
@@ -853,7 +853,7 @@ class LatencyOptimizer {
     this.predictionEngine = new PredictionEngine();
     this.parallelExecutor = new ParallelExecutor();
   }
-  
+
   async optimizedProcessing(audioData, callContext) {
     // Level 1: 音频预处理与缓存查询并行
     const level1Tasks = Promise.allSettled([
@@ -862,7 +862,7 @@ class LatencyOptimizer {
       this.preloadCache.getWhitelistStatus(callContext.userId, callContext.callerPhone),
       this.predictionEngine.predictIntent(callContext.recentAudio)
     ]);
-    
+
     // Level 2: STT与意图预测并行
     const [preprocessResult] = await level1Tasks;
     const level2Tasks = Promise.allSettled([
@@ -870,15 +870,15 @@ class LatencyOptimizer {
       this.predictionEngine.getPrecomputedResponses(callContext),
       this.conversationContext.loadHistory(callContext.callId)
     ]);
-    
+
     // Level 3: AI生成与TTS预缓存并行
     const [sttResult, precomputedResponses, historyResult] = await level2Tasks;
-    
+
     if (precomputedResponses.status === 'fulfilled' && precomputedResponses.value) {
       // 直接返回预计算结果，延迟 < 100ms
       return precomputedResponses.value;
     }
-    
+
     // 需要实时生成，但已有上下文，延迟约500-800ms
     return await this.generateRealTimeResponse(sttResult.value, historyResult.value);
   }
@@ -894,7 +894,7 @@ class PredictiveResponseSystem {
     this.ttsCache = new Map();
     this.initializeTemplates();
   }
-  
+
   initializeTemplates() {
     // 骚扰电话常见模式和预生成回复
     const templates = {
@@ -914,7 +914,7 @@ class PredictiveResponseSystem {
         probability: 0.88
       }
     };
-    
+
     // 预生成所有回复的TTS
     Object.entries(templates).forEach(async ([intent, config]) => {
       const audioResponses = await Promise.all(
@@ -923,17 +923,17 @@ class PredictiveResponseSystem {
       this.ttsCache.set(intent, audioResponses);
     });
   }
-  
+
   async predictAndPreload(audioStream, duration = 2000) {
     // 基于前2秒音频预测意图
     const partialSTT = await this.sttService.partialRecognize(audioStream);
     const predictedIntent = await this.intentClassifier.predict(partialSTT);
-    
+
     if (predictedIntent.confidence > 0.7) {
       // 预加载相应的回复
       return this.ttsCache.get(predictedIntent.intent);
     }
-    
+
     return null;
   }
 }
@@ -944,24 +944,24 @@ class PredictiveResponseSystem {
 class MultiLevelCache {
   constructor() {
     this.l1Cache = new Map(); // 内存缓存 < 1ms
-    this.l2Cache = new RedisCache(); // Redis缓存 < 10ms  
+    this.l2Cache = new RedisCache(); // Redis缓存 < 10ms
     this.l3Cache = new DatabaseCache(); // 数据库缓存 < 50ms
     this.cacheWarmer = new CacheWarmer();
   }
-  
+
   async get(key, context) {
     // L1: 内存缓存
     if (this.l1Cache.has(key)) {
       return { data: this.l1Cache.get(key), source: 'memory', latency: 0 };
     }
-    
+
     // L2: Redis缓存
     const redisResult = await this.l2Cache.get(key);
     if (redisResult) {
       this.l1Cache.set(key, redisResult); // 回填L1
       return { data: redisResult, source: 'redis', latency: 5 };
     }
-    
+
     // L3: 数据库查询
     const dbResult = await this.l3Cache.get(key);
     if (dbResult) {
@@ -969,25 +969,25 @@ class MultiLevelCache {
       this.l1Cache.set(key, dbResult); // 回填L1
       return { data: dbResult, source: 'database', latency: 30 };
     }
-    
+
     return null;
   }
-  
+
   // 智能预热：根据通话模式预加载数据
   async warmupCache(userId, callerPhone) {
     const profile = await this.userProfiler.getProfile(callerPhone);
     const recentCalls = await this.callHistory.getRecent(userId, 10);
-    
+
     // 预加载可能需要的响应
     if (profile && profile.spamCategory) {
       await this.preloadResponses(profile.spamCategory);
     }
-    
+
     // 预加载历史对话上下文
-    const relatedCalls = recentCalls.filter(call => 
+    const relatedCalls = recentCalls.filter(call =>
       call.callerPhone === callerPhone
     );
-    
+
     if (relatedCalls.length > 0) {
       await this.preloadConversationContext(relatedCalls[0].id);
     }
@@ -1003,13 +1003,13 @@ class StreamingProcessor {
     this.speechBoundaryDetector = new SpeechBoundaryDetector();
     this.partialResultProcessor = new PartialResultProcessor();
   }
-  
+
   async processAudioStream(audioChunk) {
     this.audioBuffer.write(audioChunk);
-    
+
     // 实时检测语音边界
     const boundary = await this.speechBoundaryDetector.detect(audioChunk);
-    
+
     if (boundary.type === 'speech_start') {
       // 开始预处理和预测
       this.startPredictiveProcessing();
@@ -1020,21 +1020,21 @@ class StreamingProcessor {
       // 处理部分结果
       return await this.processPartialUtterance();
     }
-    
+
     return null;
   }
-  
+
   async processPartialUtterance() {
     // 边听边处理，不等待完整语句
     const partialAudio = this.audioBuffer.getLastNSeconds(1.5);
     const partialText = await this.sttService.partialRecognize(partialAudio);
-    
+
     if (partialText.confidence > 0.8) {
       // 足够可信的部分识别，开始预生成响应
       const intent = await this.intentClassifier.quickClassify(partialText.text);
       return await this.predictionEngine.generateResponse(intent);
     }
-    
+
     return null;
   }
 }
@@ -1048,23 +1048,23 @@ class NetworkOptimizer {
     this.networkQualityTracker = new NetworkQualityTracker();
     this.audioCompressor = new AudioCompressor();
   }
-  
+
   async optimizeTransmission(audioData, targetLatency = 200) {
     const networkQuality = await this.networkQualityTracker.getCurrentMetrics();
-    
+
     // 根据网络状况动态调整
     const config = this.getOptimalConfig(networkQuality, targetLatency);
-    
+
     // 自适应压缩
     const compressedAudio = await this.audioCompressor.compress(
-      audioData, 
+      audioData,
       config.compressionRatio
     );
-    
+
     // 分块传输，减少延迟
     return await this.chunkedTransmission(compressedAudio, config.chunkSize);
   }
-  
+
   getOptimalConfig(networkQuality, targetLatency) {
     if (networkQuality.bandwidth < 100000) { // < 100kbps
       return { compressionRatio: 0.3, chunkSize: 512 };
@@ -1085,28 +1085,28 @@ class PerformanceMonitor {
     this.autoTuner = new AutoTuner();
     this.alertManager = new AlertManager();
   }
-  
+
   async monitorLatency(operation, fn) {
     const startTime = performance.now();
     const result = await fn();
     const endTime = performance.now();
-    
+
     const latency = endTime - startTime;
-    
+
     await this.metrics.record(operation, {
       latency,
       timestamp: Date.now(),
       success: !!result
     });
-    
+
     // 超过阈值自动调优
     if (latency > this.getThreshold(operation)) {
       await this.autoTuner.optimize(operation, latency);
     }
-    
+
     return result;
   }
-  
+
   getThreshold(operation) {
     const thresholds = {
       'stt_processing': 200,
@@ -1115,7 +1115,7 @@ class PerformanceMonitor {
       'tts_synthesis': 200,
       'total_pipeline': 800
     };
-    
+
     return thresholds[operation] || 500;
   }
 }
@@ -1131,11 +1131,11 @@ class PerformanceMonitor {
   MVP阶段 (前6个月):
     目标: < 1500ms
     策略: 基础优化 + 简单缓存
-    
+
   优化阶段 (6-12个月):
-    目标: < 1000ms  
+    目标: < 1000ms
     策略: 高级缓存 + 预测处理
-    
+
   生产阶段 (12-18个月):
     目标: < 800ms
     策略: 深度优化 + 边缘计算
@@ -1145,21 +1145,21 @@ class PerformanceMonitor {
 ```yaml
 Stage 1 - 音频预处理: 80ms
   - 音频清理: 30ms
-  - VAD检测: 25ms  
+  - VAD检测: 25ms
   - 基础缓存查询: 25ms
-  
+
 Stage 2 - 语音识别: 350ms
   - Azure STT处理: 280ms
   - 意图分类: 70ms (部分并行)
-  
+
 Stage 3 - 响应生成: 450ms
   - 上下文加载: 80ms (部分并行)
   - AI响应生成: 370ms
-  
+
 Stage 4 - 语音合成: 300ms
   - Azure TTS合成: 250ms
   - 音频编码: 50ms (并行)
-  
+
 Stage 5 - 网络传输: 150ms
   - 服务间通信: 80ms
   - 客户端传输: 70ms
@@ -1171,21 +1171,21 @@ MVP总延迟: 1330ms (预留170ms缓冲)
 ```yaml
 Stage 1 - 预处理优化: 50ms
   - 音频清理 (优化): 20ms
-  - VAD检测 (优化): 15ms  
+  - VAD检测 (优化): 15ms
   - 智能缓存查询: 15ms
-  
+
 Stage 2 - 流式识别: 250ms
   - 流式STT处理: 200ms
   - 实时意图分类: 50ms (完全并行)
-  
+
 Stage 3 - 预测响应: 300ms
   - 预测缓存命中: 50ms (60%情况)
   - AI快速生成: 250ms (40%情况)
-  
+
 Stage 4 - 优化合成: 200ms
   - TTS缓存命中: 50ms (70%情况)
   - 快速TTS合成: 150ms (30%情况)
-  
+
 Stage 5 - 优化传输: 100ms
   - 服务内部通信: 50ms
   - 压缩传输: 50ms
@@ -1199,19 +1199,19 @@ Stage 1 - 极致预处理: 30ms
   - 硬件加速音频处理: 15ms
   - 智能VAD: 10ms
   - 预热缓存: 5ms
-  
+
 Stage 2 - 并行识别: 180ms
   - 优化STT模型: 150ms
   - 预测意图识别: 30ms (完全并行)
-  
+
 Stage 3 - 智能响应: 200ms
   - 预计算响应: 30ms (80%情况)
   - 定制AI生成: 170ms (20%情况)
-  
+
 Stage 4 - 快速合成: 120ms
   - 预生成TTS: 20ms (90%情况)
   - 实时合成: 100ms (10%情况)
-  
+
 Stage 5 - 边缘传输: 50ms
   - 边缘节点处理: 30ms
   - 优化协议传输: 20ms
@@ -1228,7 +1228,7 @@ class MVPLatencyOptimizer {
     this.basicCache = new BasicCacheManager();
     this.simplePredictor = new SimplePredictorService();
   }
-  
+
   async optimizeForMVP(audioData, context) {
     // 基础并行处理
     const preprocessing = await Promise.allSettled([
@@ -1236,16 +1236,16 @@ class MVPLatencyOptimizer {
       this.basicCache.getUserProfile(context.userId),
       this.basicCache.getWhitelistStatus(context.callerPhone)
     ]);
-    
+
     // 简单的STT + 意图识别
     const recognition = await this.azureSTT.recognize(preprocessing[0].value);
     const intent = await this.simplePredictor.classifyIntent(recognition.text);
-    
+
     // 基础响应生成
     if (this.basicCache.hasResponse(intent.category)) {
       return this.basicCache.getResponse(intent.category);
     }
-    
+
     return await this.azureOpenAI.generateResponse({
       text: recognition.text,
       intent: intent.category,
@@ -1263,25 +1263,25 @@ class AdvancedLatencyOptimizer {
     this.streamProcessor = new StreamProcessorService();
     this.mlPredictor = new MLPredictorService();
   }
-  
+
   async optimizeForProduction(audioStream, context) {
     // 流式处理开始
     const streamPromise = this.streamProcessor.startProcessing(audioStream);
-    
+
     // 预测性缓存预热
     const predictionPromise = this.mlPredictor.predictLikelyResponse(context);
-    
+
     // 并行执行
     const [streamResult, prediction] = await Promise.allSettled([
       streamPromise,
       predictionPromise
     ]);
-    
+
     // 智能决策
     if (prediction.status === 'fulfilled' && prediction.value.confidence > 0.8) {
       return prediction.value.response;
     }
-    
+
     return streamResult.value;
   }
 }
@@ -1297,15 +1297,15 @@ class LatencyMonitor {
     this.alertManager = new AlertManager();
     this.autoOptimizer = new AutoOptimizer();
   }
-  
+
   async monitorLatency(operation, executionPromise) {
     const startTime = performance.now();
-    
+
     try {
       const result = await executionPromise;
       const endTime = performance.now();
       const latency = endTime - startTime;
-      
+
       // 记录指标
       await this.metrics.record({
         operation,
@@ -1313,15 +1313,15 @@ class LatencyMonitor {
         timestamp: Date.now(),
         success: true
       });
-      
+
       // 检查性能阈值
       await this.checkPerformanceThresholds(operation, latency);
-      
+
       return result;
     } catch (error) {
       const endTime = performance.now();
       const latency = endTime - startTime;
-      
+
       await this.metrics.record({
         operation,
         latency,
@@ -1329,16 +1329,16 @@ class LatencyMonitor {
         success: false,
         error: error.message
       });
-      
+
       throw error;
     }
   }
-  
+
   async checkPerformanceThresholds(operation, latency) {
     const thresholds = this.getPhaseThresholds();
     const currentPhase = await this.getCurrentPhase();
     const threshold = thresholds[currentPhase][operation];
-    
+
     if (latency > threshold * 1.2) {
       await this.alertManager.sendAlert({
         type: 'performance_degradation',
@@ -1347,12 +1347,12 @@ class LatencyMonitor {
         threshold,
         severity: 'high'
       });
-      
+
       // 触发自动优化
       await this.autoOptimizer.optimize(operation, latency);
     }
   }
-  
+
   getPhaseThresholds() {
     return {
       'mvp': {
@@ -1380,11 +1380,11 @@ class LatencyMonitor {
 
 ##### 自适应优化算法
 ```javascript
-class AdaptiveOptimizer {  
+class AdaptiveOptimizer {
   async optimizeBasedOnMetrics(metrics) {
     const bottlenecks = this.identifyBottlenecks(metrics);
     const optimizations = [];
-    
+
     for (const bottleneck of bottlenecks) {
       switch (bottleneck.component) {
         case 'stt_processing':
@@ -1401,10 +1401,10 @@ class AdaptiveOptimizer {
           break;
       }
     }
-    
+
     return this.applyOptimizations(optimizations);
   }
-  
+
   async optimizeSTTService(bottleneck) {
     return {
       type: 'stt_optimization',
@@ -1416,10 +1416,10 @@ class AdaptiveOptimizer {
       expectedImprovement: '20-30%'
     };
   }
-  
+
   async optimizeAIService(bottleneck) {
     return {
-      type: 'ai_optimization', 
+      type: 'ai_optimization',
       actions: [
         'increase_cache_hit_rate',
         'optimize_prompt_length',
@@ -1438,12 +1438,12 @@ class AdaptiveOptimizer {
     开发成本: 低 (基础实现)
     运营成本: 标准
     用户体验: 可接受
-    
+
   优化阶段 (1000ms目标):
     开发成本: 中等 (缓存优化)
     运营成本: +30% (更多计算资源)
     用户体验: 良好
-    
+
   生产阶段 (800ms目标):
     开发成本: 高 (深度优化)
     运营成本: +60% (边缘计算等)
@@ -1505,10 +1505,10 @@ Azure China East 2 (主区域)
 // 来电处理Webhook
 app.post('/incoming-call', async (req, res) => {
   const { from, callId } = req.body;
-  
+
   // 白名单检查
   const isWhitelisted = await checkWhitelist(from);
-  
+
   if (isWhitelisted) {
     // 直接转接
     await transferCall(callId, userRealPhone);
@@ -1526,13 +1526,13 @@ wss.on('connection', (ws) => {
   ws.on('message', async (audioData) => {
     // STT处理
     const transcript = await azureSTT.process(audioData);
-    
+
     // AI响应生成
     const response = await aiConversation.generate(transcript);
-    
+
     // TTS转换
     const audioResponse = await azureTTS.synthesize(response);
-    
+
     // 发送音频回复
     ws.send(audioResponse);
   });
@@ -1545,13 +1545,13 @@ class ResponseGenerator {
   async generateResponse(context, intent) {
     const prompt = `
     你是${userProfile.name}的AI助手，正在接听${intent.type}类型的骚扰电话。
-    
+
     用户特征：${userProfile.personality}
     对话历史：${context.recentMessages}
-    
+
     请生成自然的回复(20字内)：
     `;
-    
+
     return await azureOpenAI.complete(prompt);
   }
 }
@@ -1751,15 +1751,15 @@ CREATE PUBLICATION analytics_data FOR TABLE call_records, conversations, spam_pr
 #### 智能索引策略
 ```sql
 -- 部分索引：仅对活跃数据建索引
-CREATE INDEX idx_active_whitelists ON smart_whitelists(user_id, contact_phone) 
+CREATE INDEX idx_active_whitelists ON smart_whitelists(user_id, contact_phone)
 WHERE is_active = true AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP);
 
 -- 表达式索引：支持复杂查询
-CREATE INDEX idx_call_records_recent ON call_records((start_time::date)) 
+CREATE INDEX idx_call_records_recent ON call_records((start_time::date))
 WHERE start_time >= CURRENT_DATE - INTERVAL '30 days';
 
 -- 覆盖索引：减少表访问
-CREATE INDEX idx_conversations_summary ON conversations(call_record_id, intent_category, emotion) 
+CREATE INDEX idx_conversations_summary ON conversations(call_record_id, intent_category, emotion)
 INCLUDE (message_text, confidence_score);
 ```
 
@@ -1778,10 +1778,10 @@ BEGIN
         start_date := date_trunc('month', CURRENT_DATE + (i || ' months')::interval);
         end_date := start_date + interval '1 month';
         partition_name := 'call_records_' || to_char(start_date, 'YYYYMM');
-        
-        EXECUTE format('CREATE TABLE IF NOT EXISTS %I PARTITION OF call_records 
+
+        EXECUTE format('CREATE TABLE IF NOT EXISTS %I PARTITION OF call_records
                        FOR VALUES FROM (%L) TO (%L)',
-                       partition_name, 
+                       partition_name,
                        extract(year from start_date) * 100 + extract(month from start_date),
                        extract(year from end_date) * 100 + extract(month from end_date));
     END LOOP;
@@ -1799,12 +1799,12 @@ Redis缓存架构:
     - 用户基本信息: TTL 30分钟
     - 白名单状态: TTL 10分钟
     - 系统配置: TTL 1小时
-    
+
   L2_Cache (Redis):
     - 骚扰者画像: TTL 2小时
     - 对话历史: TTL 24小时
     - 统计数据: TTL 4小时
-    
+
   预热策略:
     - 用户登录时预热个人数据
     - 来电时预热相关画像
@@ -1830,7 +1830,7 @@ RETURNS boolean AS $$
 BEGIN
     -- 使用pgcrypto进行加密备份
     EXECUTE format('COPY (SELECT pgp_sym_encrypt(row_to_json(%I)::text, %L) FROM %I) TO %L',
-                   table_name, encryption_key, table_name, 
+                   table_name, encryption_key, table_name,
                    '/backup/' || table_name || '_' || to_char(now(), 'YYYYMMDD') || '.enc');
     RETURN true;
 END;
@@ -1882,13 +1882,13 @@ $$ LANGUAGE plpgsql;
     - 个人身份信息
     - 通话内容转录
     保护措施: 端到端加密 + 访问控制 + 审计日志
-    
+
   私密数据 (Level 2):
     - 用户画像信息
     - 白名单联系人
     - 通话统计数据
     保护措施: 传输加密 + 数据脱敏 + 权限管理
-    
+
   一般数据 (Level 1):
     - 系统配置信息
     - 性能监控数据
@@ -1904,16 +1904,16 @@ class SecurityManager {
     this.keyManager = new KeyManagementService();
     this.accessController = new AccessController();
   }
-  
+
   // 敏感数据端到端加密
   async encryptSensitiveData(data, userId) {
     const userKey = await this.keyManager.getUserKey(userId);
     const systemKey = await this.keyManager.getSystemKey();
-    
+
     // 双重加密：用户密钥 + 系统密钥
     const userEncrypted = await this.encryptionService.encrypt(data, userKey);
     const finalEncrypted = await this.encryptionService.encrypt(userEncrypted, systemKey);
-    
+
     return {
       data: finalEncrypted,
       keyVersion: userKey.version,
@@ -1921,21 +1921,21 @@ class SecurityManager {
       checksum: this.calculateChecksum(finalEncrypted)
     };
   }
-  
+
   // 语音数据专用加密
   async encryptAudioData(audioBuffer, callId) {
     const audioKey = await this.keyManager.generateAudioKey(callId);
-    
+
     // 使用AES-256-GCM加密音频流
     const encryptedAudio = await this.encryptionService.encryptStream(
-      audioBuffer, 
+      audioBuffer,
       audioKey,
       { algorithm: 'aes-256-gcm' }
     );
-    
+
     // 密钥使用后立即销毁
     await this.keyManager.destroyKey(audioKey);
-    
+
     return encryptedAudio;
   }
 }
@@ -1951,28 +1951,28 @@ class AuthenticationService {
     this.mfaService = new MFAService();
     this.rateLimit = new RateLimitService();
   }
-  
+
   async authenticate(credentials) {
     // 第一层：基础认证
     const user = await this.validateCredentials(credentials);
     if (!user) throw new Error('Invalid credentials');
-    
+
     // 第二层：多因素认证
     const mfaRequired = await this.checkMFARequirement(user);
     if (mfaRequired) {
       await this.mfaService.requireSecondFactor(user.id);
     }
-    
+
     // 第三层：设备指纹验证
     const deviceTrusted = await this.validateDeviceFingerprint(
-      credentials.deviceFingerprint, 
+      credentials.deviceFingerprint,
       user.id
     );
-    
+
     if (!deviceTrusted) {
       await this.notifySecurityEvent(user.id, 'untrusted_device_login');
     }
-    
+
     // 生成安全令牌
     const token = await this.jwtManager.generateToken({
       userId: user.id,
@@ -1980,7 +1980,7 @@ class AuthenticationService {
       sessionId: this.generateSessionId(),
       expiresIn: '1h'
     });
-    
+
     return { token, user: this.sanitizeUserData(user) };
   }
 }
@@ -1997,17 +1997,17 @@ class AccessController {
       'ai_service': ['read:conversation_data', 'write:ai_responses']
     };
   }
-  
+
   async checkPermission(userId, requiredPermission, resourceId = null) {
     const userRoles = await this.getUserRoles(userId);
     const userPermissions = this.expandPermissions(userRoles);
-    
+
     // 检查基础权限
     if (!userPermissions.includes(requiredPermission)) {
       await this.logAccessDenied(userId, requiredPermission, resourceId);
       return false;
     }
-    
+
     // 检查资源级权限
     if (resourceId && requiredPermission.includes('own_data')) {
       const resourceOwner = await this.getResourceOwner(resourceId);
@@ -2016,7 +2016,7 @@ class AccessController {
         return false;
       }
     }
-    
+
     await this.logAccessGranted(userId, requiredPermission, resourceId);
     return true;
   }
@@ -2033,12 +2033,12 @@ class PrivacyProtectionService {
     this.retentionPolicy = new DataRetentionPolicy();
     this.gdprCompliance = new GDPRCompliance();
   }
-  
+
   // 数据收集最小化
   async collectMinimalData(rawData, purpose) {
     const requiredFields = this.getRequiredFields(purpose);
     const minimalData = this.extractFields(rawData, requiredFields);
-    
+
     // 记录数据收集目的和法律依据
     await this.logDataCollection({
       userId: rawData.userId,
@@ -2047,10 +2047,10 @@ class PrivacyProtectionService {
       dataFields: requiredFields,
       timestamp: Date.now()
     });
-    
+
     return minimalData;
   }
-  
+
   // 自动匿名化处理
   async anonymizeConversationData(conversationRecord) {
     return {
@@ -2063,7 +2063,7 @@ class PrivacyProtectionService {
       timestamp: this.anonymizer.fuzzTimestamp(conversationRecord.timestamp)
     };
   }
-  
+
   // 数据保留策略
   async enforceRetentionPolicy() {
     const policies = {
@@ -2072,7 +2072,7 @@ class PrivacyProtectionService {
       'user_profiles': { retention: 'until_deletion_request', afterAction: 'delete' },
       'analytics_data': { retention: '2_years', afterAction: 'anonymize' }
     };
-    
+
     for (const [dataType, policy] of Object.entries(policies)) {
       await this.processExpiredData(dataType, policy);
     }
@@ -2087,7 +2087,7 @@ class GDPRCompliance {
     this.consentManager = new ConsentManager();
     this.dataSubjectRights = new DataSubjectRights();
   }
-  
+
   // 用户同意管理
   async manageConsent(userId, consentRequest) {
     const consent = {
@@ -2099,15 +2099,15 @@ class GDPRCompliance {
       explicit: true,
       withdrawable: true
     };
-    
+
     await this.consentManager.recordConsent(consent);
-    
+
     // 启用相应的数据处理功能
     await this.enableDataProcessing(userId, consentRequest.purposes);
-    
+
     return { consentId: consent.id, status: 'granted' };
   }
-  
+
   // 数据主体权利
   async handleDataSubjectRequest(userId, requestType) {
     switch (requestType) {
@@ -2125,7 +2125,7 @@ class GDPRCompliance {
         throw new Error('Invalid request type');
     }
   }
-  
+
   async deleteUserData(userId) {
     const deletionTasks = [
       this.deleteVoiceRecordings(userId),
@@ -2133,9 +2133,9 @@ class GDPRCompliance {
       this.deleteUserProfile(userId),
       this.anonymizeAnalyticsData(userId)
     ];
-    
+
     const results = await Promise.allSettled(deletionTasks);
-    
+
     // 记录删除操作
     await this.logDataDeletion({
       userId,
@@ -2143,7 +2143,7 @@ class GDPRCompliance {
       results: results.map(r => r.status),
       verificationHash: await this.generateDeletionProof(userId)
     });
-    
+
     return { status: 'completed', verificationHash: results.verificationHash };
   }
 }
@@ -2159,7 +2159,7 @@ class SecurityMonitoringService {
     this.threatDetector = new ThreatDetector();
     this.alertManager = new SecurityAlertManager();
   }
-  
+
   async monitorSecurityEvents() {
     const eventHandlers = {
       'failed_login': this.handleFailedLogin.bind(this),
@@ -2167,7 +2167,7 @@ class SecurityMonitoringService {
       'data_breach_attempt': this.handleBreachAttempt.bind(this),
       'privilege_escalation': this.handlePrivilegeEscalation.bind(this)
     };
-    
+
     // 实时监控安全事件
     this.eventStream.on('security_event', async (event) => {
       const handler = eventHandlers[event.type];
@@ -2176,14 +2176,14 @@ class SecurityMonitoringService {
       }
     });
   }
-  
+
   async handleFailedLogin(event) {
     const failureCount = await this.getFailureCount(event.userId, '1h');
-    
+
     if (failureCount > 5) {
       // 暂时锁定账户
       await this.lockAccount(event.userId, '30m');
-      
+
       // 发送安全警报
       await this.alertManager.sendAlert({
         type: 'account_lockout',
@@ -2193,11 +2193,11 @@ class SecurityMonitoringService {
       });
     }
   }
-  
+
   async detectAnomalousActivity(userId, activity) {
     const userBaseline = await this.getUserBaseline(userId);
     const anomalyScore = await this.anomalyDetector.score(activity, userBaseline);
-    
+
     if (anomalyScore > 0.8) {
       await this.alertManager.sendAlert({
         type: 'anomalous_activity',
@@ -2206,7 +2206,7 @@ class SecurityMonitoringService {
         anomalyScore,
         activity: this.sanitizeActivityData(activity)
       });
-      
+
       // 触发额外验证
       await this.requireAdditionalVerification(userId);
     }
@@ -2221,7 +2221,7 @@ class AuditLogger {
     this.logStorage = new SecureLogStorage();
     this.logIntegrity = new LogIntegrityService();
   }
-  
+
   async logSecurityEvent(event) {
     const auditLog = {
       id: this.generateLogId(),
@@ -2237,28 +2237,28 @@ class AuditLogger {
       severity: event.severity,
       metadata: this.sanitizeMetadata(event.metadata)
     };
-    
+
     // 生成完整性校验码
     auditLog.integrity = await this.logIntegrity.generateHash(auditLog);
-    
+
     // 加密存储
     const encryptedLog = await this.encryptLog(auditLog);
     await this.logStorage.store(encryptedLog);
-    
+
     // 实时转发到SIEM系统
     await this.forwardToSIEM(auditLog);
   }
-  
+
   // 防篡改日志验证
   async verifyLogIntegrity(logId) {
     const log = await this.logStorage.retrieve(logId);
     const decryptedLog = await this.decryptLog(log);
-    
+
     const expectedHash = await this.logIntegrity.generateHash({
       ...decryptedLog,
       integrity: undefined
     });
-    
+
     return expectedHash === decryptedLog.integrity;
   }
 }
@@ -2273,13 +2273,13 @@ class AuditLogger {
     - GDPR (欧盟通用数据保护条例)
     - ISO 27001 (信息安全管理)
     - ISO 27017 (云服务安全)
-    
+
   国内法规:
     - 网络安全法
-    - 数据安全法  
+    - 数据安全法
     - 个人信息保护法
     - 电信条例
-    
+
   行业标准:
     - SOC 2 Type II
     - PCI DSS (支付卡行业数据安全标准)
@@ -2297,10 +2297,10 @@ class SecurityAssessment {
       this.configurationAudit(),
       this.dataFlowAnalysis()
     ]);
-    
+
     const overallScore = this.calculateSecurityScore(assessmentResults);
     const recommendations = this.generateRecommendations(assessmentResults);
-    
+
     return {
       score: overallScore,
       results: assessmentResults,
@@ -2346,7 +2346,7 @@ class SecurityAssessment {
 - 新增关键支撑服务 (Configuration, Storage, Monitoring)
 - 采用分层通信架构，降低复杂度
 
-#### 2. 数据库架构重构 ✅  
+#### 2. 数据库架构重构 ✅
 **改进前**: 单表结构，性能瓶颈明显
 **改进后**: 分区表+读写分离+多级缓存
 - 时间分区表设计，提升60-80%查询性能
@@ -2388,7 +2388,7 @@ class SecurityAssessment {
 
 风险评估:
   高风险: 延迟优化达标 (20%)
-  中风险: AI响应质量 (30%)  
+  中风险: AI响应质量 (30%)
   低风险: 基础功能实现 (80%)
 ```
 
@@ -2422,7 +2422,7 @@ class SecurityAssessment {
 
 运营成本预估 (月1000分钟):
   MVP阶段: ~$80-120/月
-  优化阶段: ~$120-180/月  
+  优化阶段: ~$120-180/月
   生产阶段: ~$160-220/月
 ```
 

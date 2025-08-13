@@ -1,0 +1,167 @@
+
+services:
+  # Redis单实例 - 用于开发测试
+  redis:
+    image: redis:7-alpine
+    container_name: ai-ninja-cache-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-defaultpassword}
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/etc/redis/redis.conf
+    networks:
+      - cache-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Redis集群配置 - 用于生产测试
+  redis-cluster:
+    image: redis:7-alpine
+    container_name: ai-ninja-cache-redis-cluster
+    ports:
+      - "7000:7000"
+      - "7001:7001"  
+      - "7002:7002"
+    command: >
+      sh -c "
+        mkdir -p /redis-cluster &&
+        echo 'port 7000
+        cluster-enabled yes
+        cluster-config-file nodes-7000.conf
+        cluster-node-timeout 5000
+        appendonly yes
+        requirepass ${REDIS_PASSWORD:-cluster-password}
+        masterauth ${REDIS_PASSWORD:-cluster-password}' > /redis-cluster/redis-7000.conf &&
+        
+        echo 'port 7001
+        cluster-enabled yes
+        cluster-config-file nodes-7001.conf
+        cluster-node-timeout 5000
+        appendonly yes
+        requirepass ${REDIS_PASSWORD:-cluster-password}
+        masterauth ${REDIS_PASSWORD:-cluster-password}' > /redis-cluster/redis-7001.conf &&
+        
+        echo 'port 7002
+        cluster-enabled yes
+        cluster-config-file nodes-7002.conf
+        cluster-node-timeout 5000
+        appendonly yes
+        requirepass ${REDIS_PASSWORD:-cluster-password}
+        masterauth ${REDIS_PASSWORD:-cluster-password}' > /redis-cluster/redis-7002.conf &&
+        
+        redis-server /redis-cluster/redis-7000.conf --daemonize yes &&
+        redis-server /redis-cluster/redis-7001.conf --daemonize yes &&
+        redis-server /redis-cluster/redis-7002.conf --daemonize yes &&
+        
+        sleep 10 &&
+        echo 'yes' | redis-cli -a ${REDIS_PASSWORD:-cluster-password} --cluster create 127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002 --cluster-replicas 0 &&
+        
+        tail -f /dev/null
+      "
+    volumes:
+      - redis_cluster_data:/redis-cluster
+    networks:
+      - cache-network
+    profiles:
+      - cluster
+
+  # Redis Commander - Web UI for Redis management
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: ai-ninja-cache-redis-ui
+    environment:
+      - REDIS_HOSTS=local:redis:6379:0:${REDIS_PASSWORD:-defaultpassword}
+    ports:
+      - "8081:8081"
+    networks:
+      - cache-network
+    depends_on:
+      - redis
+    profiles:
+      - ui
+
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ai-ninja-cache-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - cache-network
+    profiles:
+      - monitoring
+
+  # Grafana - Metrics visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ai-ninja-cache-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - cache-network
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
+  # Cache system test runner
+  cache-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: ai-ninja-cache-tests
+    environment:
+      - NODE_ENV=test
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-defaultpassword}
+    volumes:
+      - ./src:/app/src
+      - ./examples:/app/examples
+      - ./package.json:/app/package.json
+    networks:
+      - cache-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles:
+      - test
+
+volumes:
+  redis_data:
+    driver: local
+  redis_cluster_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  cache-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

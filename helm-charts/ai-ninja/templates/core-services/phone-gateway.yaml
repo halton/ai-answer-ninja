@@ -1,0 +1,159 @@
+{{- if .Values.coreServices.phoneGateway.enabled }}
+{{- $service := .Values.coreServices.phoneGateway }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $service.name }}
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "ai-ninja.serviceLabels" (dict "Values" .Values "serviceName" $service.name "component" "gateway" "tier" "core") | nindent 4 }}
+spec:
+  replicas: {{ $service.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $service.name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $service.name }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        tier: core
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ $service.service.targetPort }}"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: {{ include "ai-ninja.serviceAccountNameForService" (dict "Values" .Values "serviceName" $service.name) }}
+      {{- include "ai-ninja.podSecurityContext" . | nindent 6 }}
+      containers:
+      - name: {{ $service.name }}
+        {{- include "ai-ninja.imageWithPolicy" (dict "Values" .Values "repository" $service.image.repository "tag" $service.image.tag) | nindent 8 }}
+        ports:
+        - name: http
+          containerPort: {{ $service.service.targetPort }}
+          protocol: TCP
+        env:
+        {{- include "ai-ninja.envVars" (dict "env" $service.env) | nindent 8 }}
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: redis-url
+        - name: AZURE_COMMUNICATION_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: azure-secrets
+              key: communication-connection-string
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: postgres-url
+        {{- include "ai-ninja.envFromConfigMap" (dict "additionalConfigMaps" (list "app-config")) | nindent 8 }}
+        {{- include "ai-ninja.resources" $service | nindent 8 }}
+        {{- include "ai-ninja.healthChecks" $service | nindent 8 }}
+        {{- if or $service.volumes .Values.platformServices.storageService.persistence.enabled }}
+        {{- include "ai-ninja.volumeMounts" $service | nindent 8 }}
+        {{- end }}
+      {{- if or $service.volumes .Values.platformServices.storageService.persistence.enabled }}
+      {{- include "ai-ninja.volumes" $service | nindent 6 }}
+      {{- end }}
+      {{- include "ai-ninja.nodeSelector" $service | nindent 6 }}
+      {{- include "ai-ninja.tolerations" $service | nindent 6 }}
+      {{- include "ai-ninja.affinity" (dict "affinity" $service.affinity "serviceName" $service.name) | nindent 6 }}
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $service.name }}-service
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "ai-ninja.serviceLabels" (dict "Values" .Values "serviceName" $service.name "component" "gateway" "tier" "core") | nindent 4 }}
+  {{- if eq $service.service.type "LoadBalancer" }}
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+  {{- end }}
+spec:
+  type: {{ $service.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ $service.name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+  - name: http
+    port: {{ $service.service.port }}
+    targetPort: {{ $service.service.targetPort }}
+    protocol: TCP
+  {{- if eq $service.service.type "LoadBalancer" }}
+  - name: https
+    port: 443
+    targetPort: {{ $service.service.targetPort }}
+    protocol: TCP
+  {{- end }}
+  sessionAffinity: ClientIP
+
+---
+{{- if .Values.security.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $service.name }}-sa
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "ai-ninja.serviceLabels" (dict "Values" .Values "serviceName" $service.name "component" "gateway" "tier" "core") | nindent 4 }}
+  {{- if .Values.security.serviceAccount.annotations }}
+  annotations:
+    {{- range $key, $value := .Values.security.serviceAccount.annotations }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+
+---
+{{- if .Values.security.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: {{ .Values.namespace.name }}
+  name: {{ $service.name }}-role
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $service.name }}-rolebinding
+  namespace: {{ .Values.namespace.name }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $service.name }}-sa
+  namespace: {{ .Values.namespace.name }}
+roleRef:
+  kind: Role
+  name: {{ $service.name }}-role
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
+
+---
+{{- include "ai-ninja.hpa" (dict "Values" .Values "serviceName" $service.name "autoscaling" $service.autoscaling "component" "gateway" "tier" "core") }}
+
+---
+{{- include "ai-ninja.serviceMonitor" (dict "Values" .Values "serviceName" $service.name "component" "gateway" "tier" "core") }}
+{{- end }}

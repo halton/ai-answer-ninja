@@ -261,6 +261,14 @@ export interface AzureSpeechConfig {
   endpoint: string;
   language: string;
   outputFormat: string;
+  subscriptionKey?: string;
+  serviceRegion?: string;
+  recognitionLanguage?: string;
+  synthesisLanguage?: string;
+  voiceName?: string;
+  audioFormat?: string;
+  timeout?: number;
+  enableLogging?: boolean;
 }
 
 export interface AzureOpenAIConfig {

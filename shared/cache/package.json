@@ -1,0 +1,51 @@
+{
+  "name": "@ai-ninja/shared-cache",
+  "version": "1.0.0",
+  "description": "Multi-level caching system with Redis integration for AI Answer Ninja",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "clean": "rm -rf dist",
+    "start:dev": "./scripts/start-dev.sh",
+    "example:basic": "npm run build && node dist/examples/basic-usage.js",
+    "example:advanced": "npm run build && node dist/examples/advanced-features.js",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "docker:test": "docker-compose --profile test up --build",
+    "monitoring:up": "docker-compose --profile monitoring up -d",
+    "monitoring:down": "docker-compose --profile monitoring down"
+  },
+  "keywords": ["cache", "redis", "multi-level", "performance"],
+  "author": "AI Answer Ninja Team",
+  "license": "MIT",
+  "dependencies": {
+    "ioredis": "^5.3.2",
+    "node-cache": "^5.1.2",
+    "lru-cache": "^10.0.1",
+    "redis-lock": "^0.1.4",
+    "prom-client": "^15.0.0",
+    "uuid": "^9.0.1",
+    "lodash": "^4.17.21",
+    "zlib": "^1.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.0",
+    "@types/lodash": "^4.14.199",
+    "@types/uuid": "^9.0.5",
+    "typescript": "^5.2.2",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.5",
+    "ts-jest": "^29.1.1",
+    "eslint": "^8.51.0",
+    "@typescript-eslint/eslint-plugin": "^6.7.4",
+    "@typescript-eslint/parser": "^6.7.4"
+  }
+}

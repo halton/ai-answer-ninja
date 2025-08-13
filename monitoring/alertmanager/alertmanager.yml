@@ -1,0 +1,284 @@
+global:
+  # SMTP配置
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'alerts@ai-answer-ninja.com'
+  smtp_auth_username: 'alerts@ai-answer-ninja.com'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+  smtp_require_tls: true
+
+# 告警路由规则
+route:
+  group_by: ['alertname', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default-receiver'
+  routes:
+    # 关键服务告警
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 10s
+      repeat_interval: 30m
+      routes:
+        # 生产环境关键告警立即通知
+        - match:
+            environment: production
+          receiver: 'production-critical'
+          group_wait: 0s
+          repeat_interval: 15m
+
+    # 警告级别告警
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 1m
+      repeat_interval: 2h
+
+    # 信息级别告警
+    - match:
+        severity: info
+      receiver: 'info-alerts'
+      group_wait: 5m
+      repeat_interval: 24h
+
+    # 安全相关告警
+    - match_re:
+        alertname: '.*[Ss]ecurity.*|.*[Aa]uth.*|.*[Aa]ttack.*'
+      receiver: 'security-alerts'
+      group_wait: 30s
+      repeat_interval: 1h
+
+    # 数据库相关告警
+    - match_re:
+        alertname: '.*PostgreSQL.*|.*Redis.*|.*Database.*'
+      receiver: 'database-alerts'
+      group_wait: 1m
+      repeat_interval: 1h
+
+    # Kubernetes告警
+    - match_re:
+        alertname: '.*Kubernetes.*|.*Kube.*'
+      receiver: 'infrastructure-alerts'
+      group_wait: 2m
+      repeat_interval: 2h
+
+# 通知接收器
+receivers:
+  # 默认接收器
+  - name: 'default-receiver'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#alerts'
+        title: 'AI Answer Ninja Alert'
+        text: |
+          {{ range .Alerts }}
+          **Alert:** {{ .Annotations.summary }}
+          **Description:** {{ .Annotations.description }}
+          **Severity:** {{ .Labels.severity }}
+          **Service:** {{ .Labels.job }}
+          **Environment:** {{ .Labels.environment }}
+          {{ end }}
+        send_resolved: true
+
+  # 关键告警接收器
+  - name: 'critical-alerts'
+    # Slack通知
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#critical-alerts'
+        title: '🚨 CRITICAL ALERT'
+        text: |
+          {{ range .Alerts }}
+          🚨 **CRITICAL ALERT** 🚨
+          **Alert:** {{ .Annotations.summary }}
+          **Description:** {{ .Annotations.description }}
+          **Service:** {{ .Labels.job }}
+          **Instance:** {{ .Labels.instance }}
+          **Environment:** {{ .Labels.environment }}
+          **Started:** {{ .StartsAt }}
+          {{ end }}
+        send_resolved: true
+        color: 'danger'
+    
+    # 邮件通知
+    email_configs:
+      - to: 'oncall@ai-answer-ninja.com'
+        subject: '🚨 Critical Alert: {{ .GroupLabels.alertname }}'
+        html: |
+          <h2>Critical Alert Triggered</h2>
+          {{ range .Alerts }}
+          <h3>{{ .Annotations.summary }}</h3>
+          <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+          <p><strong>Service:</strong> {{ .Labels.job }}</p>
+          <p><strong>Instance:</strong> {{ .Labels.instance }}</p>
+          <p><strong>Environment:</strong> {{ .Labels.environment }}</p>
+          <p><strong>Started:</strong> {{ .StartsAt }}</p>
+          <p><strong>Alert Link:</strong> <a href="http://prometheus.ai-answer-ninja.com/alerts">View in Prometheus</a></p>
+          {{ end }}
+    
+    # Teams通知
+    msteams_configs:
+      - webhook_url: '${MS_TEAMS_WEBHOOK_URL}'
+        title: '🚨 Critical Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          **Alert:** {{ .Annotations.summary }}
+          **Description:** {{ .Annotations.description }}
+          **Service:** {{ .Labels.job }}
+          **Environment:** {{ .Labels.environment }}
+          {{ end }}
+        send_resolved: true
+
+  # 生产环境关键告警
+  - name: 'production-critical'
+    # PagerDuty集成
+    pagerduty_configs:
+      - routing_key: '${PAGERDUTY_ROUTING_KEY}'
+        description: '{{ .GroupLabels.alertname }}: {{ .Annotations.summary }}'
+        severity: 'critical'
+        details:
+          alert: '{{ .GroupLabels.alertname }}'
+          description: '{{ .Annotations.description }}'
+          environment: '{{ .Labels.environment }}'
+          service: '{{ .Labels.job }}'
+          instance: '{{ .Labels.instance }}'
+    
+    # Slack关键通知
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#production-alerts'
+        username: 'AlertManager'
+        title: '🔥 PRODUCTION CRITICAL 🔥'
+        text: |
+          <!channel>
+          {{ range .Alerts }}
+          🔥 **PRODUCTION CRITICAL** 🔥
+          **Alert:** {{ .Annotations.summary }}
+          **Description:** {{ .Annotations.description }}
+          **Service:** {{ .Labels.job }}
+          **Instance:** {{ .Labels.instance }}
+          **Started:** {{ .StartsAt }}
+          **Runbook:** https://runbooks.ai-answer-ninja.com/{{ .Labels.alertname }}
+          {{ end }}
+        send_resolved: true
+        color: 'danger'
+
+  # 警告级别告警
+  - name: 'warning-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#warnings'
+        title: '⚠️ Warning Alert'
+        text: |
+          {{ range .Alerts }}
+          ⚠️ **Warning Alert**
+          **Alert:** {{ .Annotations.summary }}
+          **Description:** {{ .Annotations.description }}
+          **Service:** {{ .Labels.job }}
+          **Environment:** {{ .Labels.environment }}
+          {{ end }}
+        send_resolved: true
+        color: 'warning'
+
+  # 信息级别告警
+  - name: 'info-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#info-alerts'
+        title: 'ℹ️ Info Alert'
+        text: |
+          {{ range .Alerts }}
+          ℹ️ **Info Alert**
+          **Alert:** {{ .Annotations.summary }}
+          **Description:** {{ .Annotations.description }}
+          **Service:** {{ .Labels.job }}
+          {{ end }}
+        send_resolved: true
+
+  # 安全告警
+  - name: 'security-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#security-alerts'
+        title: '🛡️ Security Alert'
+        text: |
+          {{ range .Alerts }}
+          🛡️ **Security Alert**
+          **Alert:** {{ .Annotations.summary }}
+          **Description:** {{ .Annotations.description }}
+          **Service:** {{ .Labels.job }}
+          **Source:** {{ .Labels.source_ip }}
+          **Environment:** {{ .Labels.environment }}
+          {{ end }}
+        send_resolved: true
+        color: 'danger'
+    
+    email_configs:
+      - to: 'security@ai-answer-ninja.com'
+        subject: '🛡️ Security Alert: {{ .GroupLabels.alertname }}'
+        html: |
+          <h2>Security Alert</h2>
+          {{ range .Alerts }}
+          <h3>{{ .Annotations.summary }}</h3>
+          <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+          <p><strong>Service:</strong> {{ .Labels.job }}</p>
+          <p><strong>Source IP:</strong> {{ .Labels.source_ip }}</p>
+          <p><strong>Environment:</strong> {{ .Labels.environment }}</p>
+          <p><strong>Started:</strong> {{ .StartsAt }}</p>
+          {{ end }}
+
+  # 数据库告警
+  - name: 'database-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#database-alerts'
+        title: '💾 Database Alert'
+        text: |
+          {{ range .Alerts }}
+          💾 **Database Alert**
+          **Alert:** {{ .Annotations.summary }}
+          **Description:** {{ .Annotations.description }}
+          **Database:** {{ .Labels.datname }}{{ .Labels.db }}
+          **Instance:** {{ .Labels.instance }}
+          **Environment:** {{ .Labels.environment }}
+          {{ end }}
+        send_resolved: true
+        color: 'warning'
+
+  # 基础设施告警
+  - name: 'infrastructure-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#infrastructure'
+        title: '🏗️ Infrastructure Alert'
+        text: |
+          {{ range .Alerts }}
+          🏗️ **Infrastructure Alert**
+          **Alert:** {{ .Annotations.summary }}
+          **Description:** {{ .Annotations.description }}
+          **Node/Pod:** {{ .Labels.node }}{{ .Labels.pod }}
+          **Namespace:** {{ .Labels.namespace }}
+          **Environment:** {{ .Labels.environment }}
+          {{ end }}
+        send_resolved: true
+
+# 抑制规则
+inhibit_rules:
+  # 当服务宕机时，抑制高延迟告警
+  - source_match:
+      alertname: 'ServiceDown'
+    target_match_re:
+      alertname: 'High.*Latency'
+    equal: ['job', 'instance']
+
+  # 当节点宕机时，抑制所有与该节点相关的告警
+  - source_match:
+      alertname: 'KubernetesNodeNotReady'
+    target_match_re:
+      alertname: 'High.*Usage|.*Down'
+    equal: ['instance']
+
+# 模板
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'

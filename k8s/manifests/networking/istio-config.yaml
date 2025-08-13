@@ -1,0 +1,452 @@
+# Istio Gateway for external traffic
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: ai-ninja-gateway
+  namespace: ai-ninja
+  labels:
+    app.kubernetes.io/name: ai-ninja
+    app.kubernetes.io/component: gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - api.ai-ninja.com
+    - ws.ai-ninja.com
+    tls:
+      httpsRedirect: true
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    hosts:
+    - api.ai-ninja.com
+    - ws.ai-ninja.com
+    tls:
+      mode: SIMPLE
+      credentialName: tls-secrets
+
+---
+# Virtual Service for API routing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ai-ninja-api
+  namespace: ai-ninja
+  labels:
+    app.kubernetes.io/name: ai-ninja
+    app.kubernetes.io/component: routing
+spec:
+  hosts:
+  - api.ai-ninja.com
+  gateways:
+  - ai-ninja-gateway
+  http:
+  # Phone Gateway routes
+  - match:
+    - uri:
+        prefix: /api/v1/phone
+    - uri:
+        prefix: /api/v1/calls
+    - uri:
+        prefix: /webhook
+    route:
+    - destination:
+        host: phone-gateway-service
+        port:
+          number: 3001
+    fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 100ms
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  
+  # Realtime Processor routes
+  - match:
+    - uri:
+        prefix: /api/v1/realtime
+    - uri:
+        prefix: /api/v1/audio
+    route:
+    - destination:
+        host: realtime-processor-service
+        port:
+          number: 3002
+    timeout: 30s
+    retries:
+      attempts: 2
+      perTryTimeout: 15s
+      retryOn: 5xx,reset,connect-failure
+  
+  # Conversation Engine routes
+  - match:
+    - uri:
+        prefix: /api/v1/conversation
+    - uri:
+        prefix: /api/v1/ai
+    route:
+    - destination:
+        host: conversation-engine-service
+        port:
+          number: 3003
+    timeout: 20s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure
+  
+  # Profile Analytics routes
+  - match:
+    - uri:
+        prefix: /api/v1/analytics
+    - uri:
+        prefix: /api/v1/profile
+    route:
+    - destination:
+        host: profile-analytics-service
+        port:
+          number: 3004
+    timeout: 15s
+  
+  # User Management routes
+  - match:
+    - uri:
+        prefix: /api/v1/auth
+    - uri:
+        prefix: /api/v1/users
+    route:
+    - destination:
+        host: user-management-service
+        port:
+          number: 3005
+    timeout: 10s
+  
+  # Smart Whitelist routes
+  - match:
+    - uri:
+        prefix: /api/v1/whitelist
+    route:
+    - destination:
+        host: smart-whitelist-service
+        port:
+          number: 3006
+    timeout: 5s
+  
+  # Configuration Service routes
+  - match:
+    - uri:
+        prefix: /api/v1/config
+    route:
+    - destination:
+        host: configuration-service
+        port:
+          number: 3007
+    timeout: 5s
+  
+  # Storage Service routes
+  - match:
+    - uri:
+        prefix: /api/v1/storage
+    - uri:
+        prefix: /api/v1/upload
+    route:
+    - destination:
+        host: storage-service
+        port:
+          number: 3008
+    timeout: 60s  # Longer timeout for file uploads
+  
+  # Health check routes (allow all services)
+  - match:
+    - uri:
+        prefix: /health
+    - uri:
+        prefix: /ready
+    route:
+    - destination:
+        host: phone-gateway-service
+        port:
+          number: 3001
+      weight: 20
+    - destination:
+        host: realtime-processor-service
+        port:
+          number: 3002
+      weight: 30
+    - destination:
+        host: conversation-engine-service
+        port:
+          number: 3003
+      weight: 25
+    - destination:
+        host: user-management-service
+        port:
+          number: 3005
+      weight: 25
+    timeout: 3s
+
+---
+# Virtual Service for WebSocket traffic
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ai-ninja-websocket
+  namespace: ai-ninja
+  labels:
+    app.kubernetes.io/name: ai-ninja
+    app.kubernetes.io/component: websocket
+spec:
+  hosts:
+  - ws.ai-ninja.com
+  gateways:
+  - ai-ninja-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /ws/realtime
+    - headers:
+        upgrade:
+          exact: websocket
+    route:
+    - destination:
+        host: realtime-processor-service
+        port:
+          number: 8080
+    timeout: 0s  # Disable timeout for WebSocket connections
+
+---
+# Destination Rules for load balancing and circuit breaker
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: phone-gateway-destination
+  namespace: ai-ninja
+spec:
+  host: phone-gateway-service
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 50
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        idleTimeout: 30s
+    circuitBreaker:
+      consecutiveErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+    outlierDetection:
+      consecutiveErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: realtime-processor-destination
+  namespace: ai-ninja
+spec:
+  host: realtime-processor-service
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        httpHeaderName: "X-Session-Id"  # Session affinity for WebSocket
+    connectionPool:
+      tcp:
+        maxConnections: 200
+        connectTimeout: 5s
+      http:
+        http1MaxPendingRequests: 100
+        maxRequestsPerConnection: 5
+        maxRetries: 2
+        idleTimeout: 60s
+    circuitBreaker:
+      consecutiveErrors: 5
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 30
+  portLevelSettings:
+  - port:
+      number: 8080
+    connectionPool:
+      tcp:
+        maxConnections: 500
+        connectTimeout: 5s
+      http:
+        http1MaxPendingRequests: 200
+        idleTimeout: 300s  # Longer idle timeout for WebSocket
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: conversation-engine-destination
+  namespace: ai-ninja
+spec:
+  host: conversation-engine-service
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    connectionPool:
+      tcp:
+        maxConnections: 50
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 30
+        maxRequestsPerConnection: 3
+        maxRetries: 3
+        idleTimeout: 45s
+    circuitBreaker:
+      consecutiveErrors: 3
+      interval: 30s
+      baseEjectionTime: 60s
+      maxEjectionPercent: 50
+
+---
+# Service Entry for external Azure services
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: azure-speech-service
+  namespace: ai-ninja
+spec:
+  hosts:
+  - eastus2.api.cognitive.microsoft.com
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: azure-openai-service
+  namespace: ai-ninja
+spec:
+  hosts:
+  - "*.openai.azure.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: azure-communication-service
+  namespace: ai-ninja
+spec:
+  hosts:
+  - "*.communication.azure.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+
+---
+# Authorization Policy for security
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: ai-ninja-auth-policy
+  namespace: ai-ninja
+spec:
+  selector:
+    matchLabels:
+      tier: core
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/ai-ninja/sa/phone-gateway-sa"]
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/v1/*"]
+  - from:
+    - source:
+        principals: ["cluster.local/ns/ai-ninja/sa/realtime-processor-sa"]
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/v1/*"]
+  - from:
+    - source:
+        principals: ["cluster.local/ns/ai-ninja/sa/conversation-engine-sa"]
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/v1/*"]
+  # Allow health checks from istio-proxy
+  - from:
+    - source:
+        principals: ["cluster.local/ns/istio-system/sa/istio-proxy-sa"]
+    to:
+    - operation:
+        methods: ["GET"]
+        paths: ["/health", "/ready"]
+
+---
+# PeerAuthentication for mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: ai-ninja-mtls
+  namespace: ai-ninja
+spec:
+  mtls:
+    mode: STRICT
+
+---
+# Telemetry configuration
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: ai-ninja-telemetry
+  namespace: ai-ninja
+spec:
+  metrics:
+  - providers:
+    - name: prometheus
+  - overrides:
+    - match:
+        metric: ALL_METRICS
+      tagOverrides:
+        request_id:
+          operation: UPSERT
+          value: "%REQ(x-request-id)%"
+        user_id:
+          operation: UPSERT
+          value: "%REQ(x-user-id)%"
+        session_id:
+          operation: UPSERT
+          value: "%REQ(x-session-id)%"
+  accessLogging:
+  - providers:
+    - name: otel
+  tracing:
+  - providers:
+    - name: jaeger

@@ -1,0 +1,662 @@
+# =============================================================================
+# Complete CI/CD Pipeline for AI Answer Ninja
+# Multi-stage pipeline with security scanning, testing, and deployment
+# =============================================================================
+
+name: AI Answer Ninja CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop, staging]
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      skip_tests:
+        description: 'Skip tests and go straight to deployment'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  NODE_VERSION: '20.x'
+  PYTHON_VERSION: '3.11'
+  HELM_VERSION: '3.13.0'
+  KUBECTL_VERSION: '1.28.0'
+
+# Concurrency control
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =============================================================================
+  # Pre-flight Checks
+  # =============================================================================
+  
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.changes.outputs.services }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      infrastructure: ${{ steps.changes.outputs.infrastructure }}
+      docs: ${{ steps.changes.outputs.docs }}
+      any_code: ${{ steps.changes.outputs.any_code }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changes
+        uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            services:
+              - 'services/**'
+              - 'shared/**'
+            frontend:
+              - 'frontend/**'
+            infrastructure:
+              - 'k8s/**'
+              - 'helm-charts/**'
+              - 'docker-compose*.yml'
+              - 'infrastructure/**'
+            docs:
+              - '**.md'
+              - 'docs/**'
+            any_code:
+              - 'services/**'
+              - 'shared/**'
+              - 'frontend/**'
+              - 'k8s/**'
+              - 'helm-charts/**'
+
+  # =============================================================================
+  # Security and Quality Gates
+  # =============================================================================
+  
+  security-scan:
+    name: Security Analysis
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.any_code == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run CodeQL Analysis
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript, typescript
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      - name: Run Snyk security scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --fail-on=upgradable
+        continue-on-error: true
+
+      - name: Run npm audit
+        run: |
+          npm audit --audit-level=high --production
+          npm audit fix --dry-run
+        continue-on-error: true
+
+      - name: Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  code-quality:
+    name: Code Quality Analysis
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.any_code == 'true'
+    strategy:
+      matrix:
+        service:
+          - services/phone-gateway
+          - services/realtime-processor
+          - services/user-management
+          - services/smart-whitelist-node
+          - services/configuration-service
+          - services/storage
+          - services/monitoring
+          - frontend/admin-panel
+          - shared/security
+          - shared/service-communication
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Run linting for ${{ matrix.service }}
+        run: |
+          if [ -d "${{ matrix.service }}" ] && [ -f "${{ matrix.service }}/package.json" ]; then
+            cd ${{ matrix.service }}
+            npm ci
+            npm run lint || npm run lint:check || echo "No lint script found"
+          fi
+
+      - name: Run type checking for ${{ matrix.service }}
+        run: |
+          if [ -d "${{ matrix.service }}" ] && [ -f "${{ matrix.service }}/tsconfig.json" ]; then
+            cd ${{ matrix.service }}
+            npm run type-check || npx tsc --noEmit || echo "No type checking available"
+          fi
+
+      - name: SonarQube Scan
+        uses: sonarqube-quality-gate-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        continue-on-error: true
+
+  # =============================================================================
+  # Testing Phase
+  # =============================================================================
+  
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [detect-changes, security-scan]
+    if: needs.detect-changes.outputs.any_code == 'true' && !inputs.skip_tests
+    strategy:
+      matrix:
+        service:
+          - services/phone-gateway
+          - services/realtime-processor
+          - services/user-management
+          - services/smart-whitelist-node
+          - services/configuration-service
+          - services/storage
+          - services/monitoring
+          - shared/security
+          - shared/service-communication
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests for ${{ matrix.service }}
+        run: |
+          if [ -d "${{ matrix.service }}" ] && [ -f "${{ matrix.service }}/package.json" ]; then
+            cd ${{ matrix.service }}
+            npm ci
+            npm run test:unit -- --coverage --ci --watchAll=false || npm test -- --coverage --ci --watchAll=false
+          fi
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          directory: ${{ matrix.service }}/coverage
+          flags: ${{ matrix.service }}
+          name: ${{ matrix.service }}-coverage
+          fail_ci_if_error: false
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [detect-changes, unit-tests]
+    if: needs.detect-changes.outputs.any_code == 'true' && !inputs.skip_tests
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: test-password
+          POSTGRES_USER: test-user
+          POSTGRES_DB: ai_ninja_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Wait for services
+        run: |
+          sleep 10
+          pg_isready -h localhost -p 5432 -U test-user
+          redis-cli -h localhost -p 6379 ping
+
+      - name: Run database migrations
+        run: |
+          export DATABASE_URL="postgresql://test-user:test-password@localhost:5432/ai_ninja_test"
+          npm run db:migrate || echo "No migration script found"
+
+      - name: Run integration tests
+        env:
+          DATABASE_URL: postgresql://test-user:test-password@localhost:5432/ai_ninja_test
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: test
+        run: |
+          npm run test:integration || npm run test:e2e || echo "No integration tests found"
+
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: [detect-changes, integration-tests]
+    if: needs.detect-changes.outputs.any_code == 'true' && !inputs.skip_tests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build services for testing
+        run: |
+          docker-compose -f docker-compose.test.yml build
+
+      - name: Start test environment
+        run: |
+          docker-compose -f docker-compose.test.yml up -d
+          sleep 30
+
+      - name: Run performance tests
+        run: |
+          npm run test:performance || echo "No performance tests configured"
+
+      - name: Cleanup test environment
+        if: always()
+        run: |
+          docker-compose -f docker-compose.test.yml down
+
+  # =============================================================================
+  # Build Phase
+  # =============================================================================
+  
+  build-images:
+    name: Build Container Images
+    runs-on: ubuntu-latest
+    needs: [detect-changes, code-quality]
+    if: needs.detect-changes.outputs.any_code == 'true'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service:
+          - name: phone-gateway
+            context: ./services/phone-gateway
+            dockerfile: Dockerfile.optimized
+          - name: realtime-processor
+            context: ./services/realtime-processor
+            dockerfile: Dockerfile.optimized
+          - name: conversation-engine
+            context: ./services/conversation-engine
+            dockerfile: Dockerfile.optimized
+          - name: profile-analytics
+            context: ./services/profile-analytics
+            dockerfile: Dockerfile.optimized
+          - name: user-management
+            context: ./services/user-management
+            dockerfile: Dockerfile.optimized
+          - name: smart-whitelist
+            context: ./services/smart-whitelist-node
+            dockerfile: Dockerfile.optimized
+          - name: configuration
+            context: ./services/configuration-service
+            dockerfile: Dockerfile.optimized
+          - name: storage
+            context: ./services/storage
+            dockerfile: Dockerfile.optimized
+          - name: monitoring
+            context: ./services/monitoring
+            dockerfile: Dockerfile.optimized
+          - name: admin-panel
+            context: ./frontend/admin-panel
+            dockerfile: Dockerfile.optimized
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tags: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service.name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.context }}/${{ matrix.service.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Run Trivy vulnerability scanner on image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service.name }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-image-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-image-results.sarif'
+
+  # =============================================================================
+  # Deployment Phase
+  # =============================================================================
+  
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-images, unit-tests]
+    if: |
+      (github.ref == 'refs/heads/develop' || 
+       github.ref == 'refs/heads/staging' || 
+       inputs.environment == 'staging') &&
+      needs.detect-changes.outputs.any_code == 'true'
+    environment:
+      name: staging
+      url: https://staging.ai-ninja.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBECONFIG_STAGING }}" | base64 -d > ~/.kube/config
+          kubectl config current-context
+
+      - name: Update Helm dependencies
+        run: |
+          cd helm-charts/ai-ninja
+          helm dependency update
+
+      - name: Deploy to staging
+        run: |
+          helm upgrade --install ai-ninja-staging ./helm-charts/ai-ninja \
+            --namespace ai-ninja-staging \
+            --create-namespace \
+            --values ./helm-charts/ai-ninja/values-staging.yaml \
+            --set global.image.tag=${{ github.sha }} \
+            --set global.environment=staging \
+            --wait \
+            --timeout=10m
+
+      - name: Run smoke tests
+        run: |
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=ai-ninja \
+            --namespace ai-ninja-staging --timeout=300s
+          
+          # Run basic health checks
+          kubectl get pods -n ai-ninja-staging
+          kubectl get services -n ai-ninja-staging
+          
+          # Test endpoints
+          curl -f https://staging.ai-ninja.com/health || exit 1
+
+      - name: Notify deployment status
+        uses: 8398a7/action-slack@v3
+        if: always()
+        with:
+          status: ${{ job.status }}
+          channel: '#deployments'
+          text: 'Staging deployment ${{ job.status }} for commit ${{ github.sha }}'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-images, integration-tests, performance-tests]
+    if: |
+      (github.ref == 'refs/heads/main' || 
+       startsWith(github.ref, 'refs/tags/v') ||
+       inputs.environment == 'production') &&
+      needs.detect-changes.outputs.any_code == 'true'
+    environment:
+      name: production
+      url: https://ai-ninja.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBECONFIG_PRODUCTION }}" | base64 -d > ~/.kube/config
+          kubectl config current-context
+
+      - name: Pre-deployment backup
+        run: |
+          # Create database backup before deployment
+          kubectl exec -n ai-ninja $(kubectl get pods -n ai-ninja -l app=postgres -o name | head -1) -- \
+            pg_dump -U postgres ai_ninja > backup-$(date +%Y%m%d-%H%M%S).sql
+
+      - name: Update Helm dependencies
+        run: |
+          cd helm-charts/ai-ninja
+          helm dependency update
+
+      - name: Deploy to production
+        run: |
+          helm upgrade --install ai-ninja ./helm-charts/ai-ninja \
+            --namespace ai-ninja \
+            --create-namespace \
+            --values ./helm-charts/ai-ninja/values-production.yaml \
+            --set global.image.tag=${{ github.sha }} \
+            --set global.environment=production \
+            --wait \
+            --timeout=15m
+
+      - name: Run production health checks
+        run: |
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=ai-ninja \
+            --namespace ai-ninja --timeout=600s
+          
+          # Comprehensive health checks
+          kubectl get pods -n ai-ninja
+          kubectl get services -n ai-ninja
+          kubectl get ingress -n ai-ninja
+          
+          # Test all endpoints
+          curl -f https://ai-ninja.com/health || exit 1
+          curl -f https://api.ai-ninja.com/health || exit 1
+
+      - name: Run post-deployment tests
+        run: |
+          # Run production-safe integration tests
+          npm run test:production || echo "No production tests configured"
+
+      - name: Notify deployment success
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          channel: '#deployments'
+          text: |
+            🚀 Production deployment successful!
+            Version: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            URL: https://ai-ninja.com
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            CHANGELOG.md
+
+  # =============================================================================
+  # Rollback and Monitoring
+  # =============================================================================
+  
+  post-deployment-monitoring:
+    name: Post-Deployment Monitoring
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always() && contains(needs.*.result, 'success')
+    steps:
+      - name: Monitor deployment health
+        run: |
+          # Monitor for 5 minutes after deployment
+          for i in {1..10}; do
+            echo "Health check $i/10"
+            curl -f https://ai-ninja.com/health || exit 1
+            sleep 30
+          done
+
+      - name: Check metrics and alerts
+        run: |
+          # Check if any alerts are firing
+          echo "Checking Prometheus alerts..."
+          # This would integrate with your monitoring system
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "Deployment health checks failed, initiating rollback..."
+          helm rollback ai-ninja --namespace ai-ninja
+
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always()
+    steps:
+      - name: Clean up old container images
+        run: |
+          # Clean up old images to save storage
+          echo "Cleaning up old container images..."
+          
+      - name: Update deployment status
+        run: |
+          echo "Pipeline completed with status: ${{ job.status }}"

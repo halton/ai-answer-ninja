@@ -1,7 +1,6 @@
 # Docker Compose Override for Development
 # This file automatically merges with docker-compose.yml in development
 
-version: '3.8'
 
 services:
   # ===========================================

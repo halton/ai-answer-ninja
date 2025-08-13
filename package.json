@@ -1,8 +1,75 @@
 {
+  "name": "ai-answer-ninja",
+  "version": "1.0.0",
+  "description": "智能电话应答系统 - AI驱动的骚扰电话处理平台",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:services\" \"npm run dev:frontend\"",
+    "dev:services": "docker-compose up -d",
+    "dev:frontend": "cd frontend/admin-panel && npm run dev",
+    "build": "npm run build:services && npm run build:frontend",
+    "build:services": "docker-compose build",
+    "build:frontend": "cd frontend/admin-panel && npm run build",
+    "start": "docker-compose up -d",
+    "stop": "docker-compose down",
+    "restart": "npm run stop && npm run start",
+    "install:all": "npm run install:services && npm run install:frontend && npm run install:shared",
+    "install:services": "concurrently \"npm run install:phone-gateway\" \"npm run install:realtime-processor\" \"npm run install:conversation-engine\" \"npm run install:profile-analytics\" \"npm run install:user-management\" \"npm run install:smart-whitelist\" \"npm run install:configuration\" \"npm run install:storage\" \"npm run install:monitoring\"",
+    "install:phone-gateway": "cd services/phone-gateway && npm install",
+    "install:realtime-processor": "cd services/realtime-processor && npm install",
+    "install:conversation-engine": "cd services/conversation-engine && npm install",
+    "install:profile-analytics": "cd services/profile-analytics && npm install",
+    "install:user-management": "cd services/user-management && npm install",
+    "install:smart-whitelist": "cd services/smart-whitelist-node && npm install",
+    "install:configuration": "cd services/configuration-service && npm install",
+    "install:storage": "cd services/storage && npm install",
+    "install:monitoring": "cd services/monitoring && npm install",
+    "install:frontend": "cd frontend/admin-panel && npm install",
+    "install:shared": "cd shared/security && npm install",
+    "test": "npm run test:unit && npm run test:integration && npm run test:e2e",
+    "test:unit": "cd tests && npm run test:unit",
+    "test:integration": "cd tests && npm run test:integration",
+    "test:e2e": "cd tests && npm run test:e2e",
+    "test:performance": "cd tests && npm run test:performance",
+    "db:migrate": "docker-compose exec postgres psql -U ai_ninja -d ai_ninja_db -f /migrations/001-create-users-table.sql && docker-compose exec postgres psql -U ai_ninja -d ai_ninja_db -f /migrations/002-create-optimized-tables.sql",
+    "db:seed": "docker-compose exec postgres psql -U ai_ninja -d ai_ninja_db -f /seeds/development/comprehensive-seed-data.sql",
+    "db:reset": "docker-compose down -v && docker-compose up -d postgres redis && sleep 5 && npm run db:migrate && npm run db:seed",
+    "logs": "docker-compose logs -f",
+    "health": "curl -f http://localhost:8080/health && echo '\\n✅ API Gateway健康' || echo '❌ API Gateway不健康'",
+    "health:all": "concurrently \"curl -f http://localhost:3001/health && echo 'Phone Gateway: ✅'\" \"curl -f http://localhost:3002/health && echo 'Realtime Processor: ✅'\" \"curl -f http://localhost:3003/health && echo 'Conversation Engine: ✅'\" \"curl -f http://localhost:3004/health && echo 'Profile Analytics: ✅'\" \"curl -f http://localhost:3005/health && echo 'User Management: ✅'\" \"curl -f http://localhost:3006/health && echo 'Smart Whitelist: ✅'\" \"curl -f http://localhost:3007/health && echo 'Configuration: ✅'\" \"curl -f http://localhost:3008/health && echo 'Storage: ✅'\" \"curl -f http://localhost:3009/health && echo 'Monitoring: ✅'\"",
+    "deploy": "./scripts/deploy.sh",
+    "deploy:production": "docker-compose -f docker-compose.production.yml up -d",
+    "clean": "docker-compose down -v --remove-orphans && docker system prune -f"
+  },
+  "keywords": [
+    "ai",
+    "telephone",
+    "spam-calls",
+    "voice-recognition",
+    "azure",
+    "microservices",
+    "typescript",
+    "nodejs"
+  ],
+  "author": "AI Answer Ninja Team",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "prettier": "^3.1.1",
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3",
+    "nodemon": "^3.0.2"
+  },
   "dependencies": {
     "axios": "^1.11.0",
     "jest": "^30.0.5",
     "opossum": "^9.0.0",
-    "p-queue": "^8.0.1"
+    "p-queue": "^8.0.1",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
   }
 }

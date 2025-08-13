@@ -1,0 +1,279 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime-processor
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+    version: v1
+    app.kubernetes.io/name: realtime-processor
+    app.kubernetes.io/component: processor
+    app.kubernetes.io/part-of: ai-ninja
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: realtime-processor
+  template:
+    metadata:
+      labels:
+        app: realtime-processor
+        tier: core
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3002"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: realtime-processor-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      initContainers:
+      - name: wait-for-redis
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - until nc -z redis-service 6379; do echo "Waiting for Redis..."; sleep 2; done;
+      containers:
+      - name: realtime-processor
+        image: ai-ninja/realtime-processor:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3002
+          protocol: TCP
+        - name: websocket
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3002"
+        - name: WS_PORT
+          value: "8080"
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: redis-url
+        - name: AZURE_SPEECH_KEY
+          valueFrom:
+            secretKeyRef:
+              name: azure-secrets
+              key: speech-key
+        - name: AZURE_SPEECH_REGION
+          valueFrom:
+            secretKeyRef:
+              name: azure-secrets
+              key: speech-region
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: azure-secrets
+              key: openai-endpoint
+        - name: AZURE_OPENAI_KEY
+          valueFrom:
+            secretKeyRef:
+              name: azure-secrets
+              key: openai-key
+        envFrom:
+        - configMapRef:
+            name: app-config
+        - configMapRef:
+            name: realtime-config
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+            ephemeral-storage: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+            ephemeral-storage: 4Gi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 10
+          successThreshold: 1
+        volumeMounts:
+        - name: audio-processing
+          mountPath: /app/temp
+        - name: logs
+          mountPath: /app/logs
+        - name: audio-cache
+          mountPath: /app/audio-cache
+      volumes:
+      - name: audio-processing
+        emptyDir:
+          medium: Memory
+          sizeLimit: 1Gi
+      - name: logs
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: audio-cache
+        emptyDir:
+          sizeLimit: 4Gi
+      nodeSelector:
+        node-type: compute-optimized
+      tolerations:
+      - key: "node-type"
+        operator: "Equal"
+        value: "compute-optimized"
+        effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - realtime-processor
+            topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: node-type
+                operator: In
+                values:
+                - compute-optimized
+          - weight: 50
+            preference:
+              matchExpressions:
+              - key: instance-type
+                operator: In
+                values:
+                - c5.xlarge
+                - c5.2xlarge
+      terminationGracePeriodSeconds: 60
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: realtime-processor-service
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+spec:
+  type: ClusterIP
+  selector:
+    app: realtime-processor
+  ports:
+  - name: http
+    port: 3002
+    targetPort: 3002
+    protocol: TCP
+  - name: websocket
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 300
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: realtime-processor-headless
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: realtime-processor
+  ports:
+  - name: http
+    port: 3002
+    targetPort: 3002
+    protocol: TCP
+  - name: websocket
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: realtime-processor-sa
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+
+---
+# ConfigMap specific for realtime processor
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: realtime-config
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+data:
+  # Audio processing configuration
+  AUDIO_SAMPLE_RATE: "16000"
+  AUDIO_CHANNELS: "1"
+  AUDIO_FORMAT: "wav"
+  
+  # WebSocket configuration
+  WS_HEARTBEAT_INTERVAL: "30000"
+  WS_CONNECTION_TIMEOUT: "60000"
+  WS_MAX_CONNECTIONS: "1000"
+  
+  # Real-time processing limits
+  MAX_CONCURRENT_SESSIONS: "100"
+  AUDIO_BUFFER_SIZE: "4096"
+  PROCESSING_TIMEOUT: "5000"
+  
+  # Azure Speech Service configuration
+  SPEECH_RECOGNITION_MODE: "continuous"
+  SPEECH_LANGUAGE: "zh-CN"
+  TTS_VOICE_NAME: "zh-CN-XiaohanNeural"
+  
+  # Performance tuning
+  NODE_OPTIONS: "--max-old-space-size=3072 --gc-interval=100"

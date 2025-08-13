@@ -1,0 +1,109 @@
+# =============================================================================
+# Realtime Processor Service - Optimized Production Dockerfile
+# Handles real-time audio processing, WebSocket connections, and Azure Speech Services
+# =============================================================================
+
+# Build stage
+FROM node:20.11.0-alpine AS builder
+
+# Install build dependencies for native modules (audio processing)
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    git \
+    pkgconfig \
+    alsa-lib-dev \
+    opus-dev \
+    && ln -sf python3 /usr/bin/python
+
+WORKDIR /app
+
+# Copy package files first for better layer caching
+COPY package*.json ./
+COPY tsconfig*.json ./
+
+# Install all dependencies (including dev for building)
+RUN npm ci --only=production=false \
+    && npm cache clean --force
+
+# Copy source code
+COPY src/ src/
+
+# Build the application
+RUN npm run build
+
+# Remove dev dependencies
+RUN npm ci --only=production \
+    && npm cache clean --force
+
+# Production stage
+FROM node:20.11.0-alpine AS production
+
+# Create non-root user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001 -G nodejs
+
+# Install runtime dependencies for audio processing
+RUN apk add --no-cache \
+    dumb-init \
+    tini \
+    curl \
+    ca-certificates \
+    openssl \
+    alsa-lib \
+    opus \
+    ffmpeg \
+    && rm -rf /var/cache/apk/*
+
+# Create application directory
+WORKDIR /app
+RUN chown -R nodejs:nodejs /app
+
+# Copy package files
+COPY --chown=nodejs:nodejs package*.json ./
+
+# Install only production dependencies
+RUN npm ci --only=production \
+    && npm cache clean --force \
+    && rm -rf ~/.npm
+
+# Copy built application from builder stage
+COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
+
+# Copy runtime files
+COPY --chown=nodejs:nodejs scripts/ ./scripts/
+COPY --chown=nodejs:nodejs config/ ./config/ 2>/dev/null || true
+COPY --chown=nodejs:nodejs examples/ ./examples/ 2>/dev/null || true
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV PORT=3002
+ENV NODE_OPTIONS="--max-old-space-size=2048"
+ENV UV_THREADPOOL_SIZE=16
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/logs /app/temp /app/audio /app/cache && \
+    chown -R nodejs:nodejs /app/logs /app/temp /app/audio /app/cache
+
+# Switch to non-root user
+USER nodejs
+
+# Expose ports (HTTP and WebSocket)
+EXPOSE 3002 8080
+
+# Health check with WebSocket endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD curl -f http://localhost:3002/health || exit 1
+
+# Use tini for proper signal handling
+ENTRYPOINT ["tini", "--"]
+
+# Start the application
+CMD ["node", "dist/realtimeServer.js"]
+
+# Metadata
+LABEL maintainer="AI Answer Ninja Team"
+LABEL service="realtime-processor"
+LABEL version="1.0.0"
+LABEL description="Real-time audio processing service with WebSocket support and Azure Speech integration"

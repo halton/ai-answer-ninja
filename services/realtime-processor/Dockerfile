@@ -4,49 +4,50 @@ FROM node:18-alpine AS builder
 # Set working directory
 WORKDIR /app
 
-# Install build dependencies
+# Install build dependencies including audio processing libs
 RUN apk add --no-cache \
     python3 \
     make \
     g++ \
     git \
-    libc6-compat
+    libc6-compat \
+    ffmpeg-dev \
+    sox-dev
 
-# Copy package files
+# Copy package files for dependency caching
 COPY package.json ./
 COPY tsconfig.json ./
-# Copy package-lock.json if it exists
 COPY package-lock*.json ./
 
-# Install dependencies
-RUN npm ci --only=production --ignore-scripts || npm install --only=production
+# Install all dependencies for build
+RUN npm ci --ignore-scripts || npm install
 
 # Copy source code
 COPY src/ ./src/
 
-# Build the application
+# Build the application with optimizations
 RUN npm run build
 
 # Production stage
 FROM node:18-alpine AS production
 
-# Install security updates
-RUN apk update && apk upgrade
-
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nextjs -u 1001
-
-# Set working directory
-WORKDIR /app
-
-# Install runtime dependencies
-RUN apk add --no-cache \
+# Install security updates and runtime dependencies
+RUN apk update && apk upgrade && \
+    apk add --no-cache \
     dumb-init \
     ca-certificates \
     tzdata \
     curl \
+    ffmpeg \
+    sox \
     && rm -rf /var/cache/apk/*
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
+
+# Set working directory
+WORKDIR /app
 
 # Copy package files and install production dependencies
 COPY package.json ./
@@ -55,36 +56,37 @@ RUN npm ci --only=production --ignore-scripts || npm install --only=production &
     npm cache clean --force
 
 # Copy built application from builder stage
-COPY --from=builder --chown=nextjs:nodejs /app/dist ./dist
+COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
 
-# Create necessary directories
-RUN mkdir -p /app/logs /app/storage/audio && \
-    chown -R nextjs:nodejs /app
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/logs /app/storage/audio /app/temp && \
+    chown -R nodejs:nodejs /app
 
 # Copy health check script
-COPY --chown=nextjs:nodejs scripts/healthcheck.sh ./healthcheck.sh
+COPY --chown=nodejs:nodejs scripts/healthcheck.sh ./healthcheck.sh
 RUN chmod +x ./healthcheck.sh
 
 # Switch to non-root user
-USER nextjs
+USER nodejs
 
-# Expose port
-EXPOSE 3002
+# Expose ports (HTTP API and WebSocket)
+EXPOSE 3002 8080
 
-# Add health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+# Enhanced health check for realtime service
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
     CMD ./healthcheck.sh || exit 1
 
 # Set environment variables
 ENV NODE_ENV=production \
     PORT=3002 \
-    HOST=0.0.0.0
+    HOST=0.0.0.0 \
+    WS_PORT=8080
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
 
-# Start the application
-CMD ["node", "dist/server.js"]
+# Start the realtime server
+CMD ["node", "dist/realtimeServer.js"]
 
 # Development stage
 FROM node:18-alpine AS development

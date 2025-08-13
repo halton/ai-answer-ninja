@@ -1,0 +1,451 @@
+# AI Answer Ninja - Database Infrastructure with Read-Write Separation
+# Production-ready PostgreSQL setup with replicas and Redis caching
+# Based on CLAUDE.md architecture specifications
+
+
+services:
+  # ===========================================
+  # Primary PostgreSQL Database (Master)
+  # ===========================================
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: ai-ninja-postgres-primary
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_ninja
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-replication_pass_456}
+      
+      # PostgreSQL configuration for primary
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+      
+    volumes:
+      # Primary data volume
+      - postgres_primary_data:/var/lib/postgresql/data
+      
+      # Configuration files
+      - ./config/postgresql/primary/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./config/postgresql/primary/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      
+      # Initialization scripts
+      - ./init/01-initialize-database.sql:/docker-entrypoint-initdb.d/01-initialize-database.sql
+      - ./migrations/001-create-base-schema.sql:/docker-entrypoint-initdb.d/02-base-schema.sql
+      - ./migrations/002-create-partitioned-tables.sql:/docker-entrypoint-initdb.d/03-partitioned-tables.sql
+      - ./migrations/003-enhanced-optimization-schema.sql:/docker-entrypoint-initdb.d/04-optimization-schema.sql
+      - ./scripts/auto-partition-manager.sql:/docker-entrypoint-initdb.d/05-partition-manager.sql
+      
+      # Backup directory
+      - postgres_backups:/var/backups/postgresql
+      
+    ports:
+      - "5432:5432"
+      
+    networks:
+      - ai-ninja-db-network
+      
+    command: >
+      postgres
+      -c config_file=/etc/postgresql/postgresql.conf
+      -c hba_file=/etc/postgresql/pg_hba.conf
+      -c logging_collector=on
+      -c log_directory='/var/log/postgresql'
+      -c log_filename='postgresql-%Y-%m-%d_%H%M%S.log'
+      -c log_statement=mod
+      -c log_min_duration_statement=1000
+      -c shared_preload_libraries='pg_stat_statements'
+      
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_ninja"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  # ===========================================
+  # PostgreSQL Read Replica 1
+  # ===========================================
+  postgres-replica1:
+    image: postgres:15-alpine
+    container_name: ai-ninja-postgres-replica1
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_ninja
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+      PGUSER: postgres
+      POSTGRES_MASTER_SERVICE: postgres-primary
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-replication_pass_456}
+      
+    volumes:
+      - postgres_replica1_data:/var/lib/postgresql/data
+      - ./config/postgresql/replica/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./config/postgresql/replica/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      - ./scripts/replica-setup.sh:/docker-entrypoint-initdb.d/setup-replica.sh
+      
+    ports:
+      - "5433:5432"
+      
+    networks:
+      - ai-ninja-db-network
+      
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+        
+    command: >
+      bash -c "
+      if [ ! -f /var/lib/postgresql/data/PG_VERSION ]; then
+        echo 'Initializing replica from primary...'
+        pg_basebackup -h postgres-primary -D /var/lib/postgresql/data -U replicator -W -v -P -R
+        echo 'standby_mode = on' >> /var/lib/postgresql/data/postgresql.conf
+        echo \"primary_conninfo = 'host=postgres-primary port=5432 user=replicator password=${REPLICATION_PASSWORD:-replication_pass_456}'\" >> /var/lib/postgresql/data/postgresql.conf
+      fi
+      postgres -c config_file=/etc/postgresql/postgresql.conf
+      "
+      
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_ninja"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+      
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: '0.8'
+        reservations:
+          memory: 512M
+          cpus: '0.3'
+
+  # ===========================================
+  # PostgreSQL Read Replica 2 (Optional)
+  # ===========================================
+  postgres-replica2:
+    image: postgres:15-alpine
+    container_name: ai-ninja-postgres-replica2
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_ninja
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+      PGUSER: postgres
+      POSTGRES_MASTER_SERVICE: postgres-primary
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-replication_pass_456}
+      
+    volumes:
+      - postgres_replica2_data:/var/lib/postgresql/data
+      - ./config/postgresql/replica/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./config/postgresql/replica/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      
+    ports:
+      - "5434:5432"
+      
+    networks:
+      - ai-ninja-db-network
+      
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+        
+    command: >
+      bash -c "
+      if [ ! -f /var/lib/postgresql/data/PG_VERSION ]; then
+        echo 'Initializing replica from primary...'
+        pg_basebackup -h postgres-primary -D /var/lib/postgresql/data -U replicator -W -v -P -R
+        echo 'standby_mode = on' >> /var/lib/postgresql/data/postgresql.conf
+        echo \"primary_conninfo = 'host=postgres-primary port=5432 user=replicator password=${REPLICATION_PASSWORD:-replication_pass_456}'\" >> /var/lib/postgresql/data/postgresql.conf
+      fi
+      postgres -c config_file=/etc/postgresql/postgresql.conf
+      "
+      
+    profiles:
+      - replica-ha # Only start in high-availability profile
+      
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_ninja"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # ===========================================
+  # Redis Cache (Multi-level caching)
+  # ===========================================
+  redis-cache:
+    image: redis:7-alpine
+    container_name: ai-ninja-redis-cache
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --requirepass ${REDIS_PASSWORD:-redis_secure_pass_789}
+      
+    volumes:
+      - redis_cache_data:/data
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf
+      
+    ports:
+      - "6379:6379"
+      
+    networks:
+      - ai-ninja-db-network
+      
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.2'
+
+  # ===========================================
+  # Redis Sentinel (High Availability)
+  # ===========================================
+  redis-sentinel:
+    image: redis:7-alpine
+    container_name: ai-ninja-redis-sentinel
+    restart: unless-stopped
+    profiles:
+      - redis-ha # Only start in high-availability profile
+      
+    command: >
+      redis-sentinel /etc/redis/sentinel.conf
+      --sentinel
+      
+    volumes:
+      - ./config/redis/sentinel.conf:/etc/redis/sentinel.conf
+      
+    ports:
+      - "26379:26379"
+      
+    networks:
+      - ai-ninja-db-network
+      
+    depends_on:
+      - redis-cache
+
+  # ===========================================
+  # PgBouncer Connection Pooler
+  # ===========================================
+  pgbouncer:
+    image: pgbouncer/pgbouncer:latest
+    container_name: ai-ninja-pgbouncer
+    restart: unless-stopped
+    environment:
+      DATABASES_HOST: postgres-primary
+      DATABASES_PORT: 5432
+      DATABASES_USER: postgres
+      DATABASES_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+      DATABASES_DBNAME: ai_ninja
+      POOL_MODE: transaction
+      SERVER_RESET_QUERY: DISCARD ALL
+      MAX_CLIENT_CONN: 100
+      DEFAULT_POOL_SIZE: 20
+      MIN_POOL_SIZE: 5
+      RESERVE_POOL_SIZE: 5
+      SERVER_LIFETIME: 3600
+      SERVER_IDLE_TIMEOUT: 600
+      LOG_CONNECTIONS: 1
+      LOG_DISCONNECTIONS: 1
+      
+    volumes:
+      - ./config/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini
+      - ./config/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt
+      
+    ports:
+      - "6432:5432"
+      
+    networks:
+      - ai-ninja-db-network
+      
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+        
+    healthcheck:
+      test: ["CMD-SHELL", "psql -h localhost -p 5432 -U postgres -d pgbouncer -c 'SHOW POOLS;' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # Database Performance Monitor
+  # ===========================================
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: ai-ninja-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:${DB_PASSWORD:-secure_password_123}@postgres-primary:5432/ai_ninja?sslmode=disable"
+      PG_EXPORTER_QUERY_PATH: "/etc/postgres_exporter"
+      
+    volumes:
+      - ./config/monitoring/postgres-queries.yml:/etc/postgres_exporter/queries.yml
+      
+    ports:
+      - "9187:9187"
+      
+    networks:
+      - ai-ninja-db-network
+      
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+
+  # ===========================================
+  # Redis Metrics Exporter
+  # ===========================================
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: ai-ninja-redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis://redis-cache:6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_pass_789}
+      
+    ports:
+      - "9121:9121"
+      
+    networks:
+      - ai-ninja-db-network
+      
+    depends_on:
+      - redis-cache
+
+  # ===========================================
+  # Database Backup Service
+  # ===========================================
+  postgres-backup:
+    image: postgres:15-alpine
+    container_name: ai-ninja-postgres-backup
+    restart: "no"
+    profiles:
+      - backup # Only run when backup profile is specified
+      
+    environment:
+      POSTGRES_HOST: postgres-primary
+      POSTGRES_DB: ai_ninja
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+      
+    volumes:
+      - postgres_backups:/backups
+      - ./scripts/backup-database.sh:/usr/local/bin/backup-database.sh
+      
+    networks:
+      - ai-ninja-db-network
+      
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+        
+    command: ["/usr/local/bin/backup-database.sh"]
+
+  # ===========================================
+  # Database Administration Interface
+  # ===========================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ai-ninja-pgadmin
+    restart: unless-stopped
+    profiles:
+      - admin # Only start in admin profile for development/debugging
+      
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@ai-ninja.com
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin_secure_pass}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+      
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./config/pgadmin/servers.json:/pgadmin4/servers.json
+      
+    ports:
+      - "8080:80"
+      
+    networks:
+      - ai-ninja-db-network
+
+# ===========================================
+# Network Configuration
+# ===========================================
+networks:
+  ai-ninja-db-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ===========================================
+# Volume Configuration
+# ===========================================
+volumes:
+  postgres_primary_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR:-./data}/postgres/primary
+      
+  postgres_replica1_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR:-./data}/postgres/replica1
+      
+  postgres_replica2_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR:-./data}/postgres/replica2
+      
+  postgres_backups:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${BACKUP_DIR:-./backups}/postgres
+      
+  redis_cache_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR:-./data}/redis
+      
+  pgadmin_data:
+    driver: local

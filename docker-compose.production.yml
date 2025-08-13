@@ -1,0 +1,748 @@
+# =============================================================================
+# Production Docker Compose Configuration
+# Optimized for production deployment with security, performance, and monitoring
+# =============================================================================
+
+
+x-common-variables: &common-variables
+  NODE_ENV: production
+  LOG_LEVEL: info
+  ENABLE_METRICS: "true"
+  ENABLE_TRACING: "true"
+
+x-restart-policy: &restart-policy
+  restart_policy:
+    condition: on-failure
+    delay: 5s
+    max_attempts: 3
+    window: 120s
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+
+x-security-opt: &security-opt
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  cap_add:
+    - NET_BIND_SERVICE
+
+x-resource-limits: &resource-limits-small
+  deploy:
+    resources:
+      limits:
+        cpus: '1.0'
+        memory: 1G
+      reservations:
+        cpus: '0.25'
+        memory: 256M
+
+x-resource-limits-medium: &resource-limits-medium
+  deploy:
+    resources:
+      limits:
+        cpus: '2.0'
+        memory: 2G
+      reservations:
+        cpus: '0.5'
+        memory: 512M
+
+x-resource-limits-large: &resource-limits-large
+  deploy:
+    resources:
+      limits:
+        cpus: '4.0'
+        memory: 4G
+      reservations:
+        cpus: '1.0'
+        memory: 1G
+
+services:
+  # ===========================================
+  # Core Services
+  # ===========================================
+  
+  phone-gateway:
+    build:
+      context: ./services/phone-gateway
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/phone-gateway:${VERSION:-latest}
+    container_name: ai-ninja-phone-gateway-prod
+    hostname: phone-gateway
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3001
+      AZURE_COMMUNICATION_CONNECTION_STRING: ${AZURE_COMMUNICATION_CONNECTION_STRING}
+      REDIS_URL: redis://redis-cluster:6379
+      DATABASE_URL: ${DATABASE_URL}
+      USER_MANAGEMENT_URL: http://user-management:3005
+      WHITELIST_SERVICE_URL: http://smart-whitelist:3006
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    networks:
+      - ai-ninja-network
+    volumes:
+      - phone-gateway-logs:/app/logs:rw
+      - phone-gateway-temp:/app/temp:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      <<: *healthcheck-defaults
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  realtime-processor:
+    build:
+      context: ./services/realtime-processor
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/realtime-processor:${VERSION:-latest}
+    container_name: ai-ninja-realtime-processor-prod
+    hostname: realtime-processor
+    <<: *security-opt
+    <<: *resource-limits-large
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3002
+      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY}
+      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION}
+      AZURE_OPENAI_KEY: ${AZURE_OPENAI_KEY}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      REDIS_URL: redis://redis-cluster:6379
+      DATABASE_URL: ${DATABASE_URL}
+      CONVERSATION_ENGINE_URL: http://conversation-engine:3003
+    ports:
+      - "3002:3002"
+      - "8080:8080"  # WebSocket port
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    networks:
+      - ai-ninja-network
+    volumes:
+      - realtime-processor-logs:/app/logs:rw
+      - realtime-processor-audio:/app/audio:rw
+      - realtime-processor-cache:/app/cache:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      <<: *healthcheck-defaults
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  conversation-engine:
+    build:
+      context: ./services/conversation-engine
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/conversation-engine:${VERSION:-latest}
+    container_name: ai-ninja-conversation-engine-prod
+    hostname: conversation-engine
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3003
+      AZURE_OPENAI_KEY: ${AZURE_OPENAI_KEY}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      REDIS_URL: redis://redis-cluster:6379
+      DATABASE_URL: ${DATABASE_URL}
+      PROFILE_ANALYTICS_URL: http://profile-analytics:3004
+    ports:
+      - "3003:3003"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    networks:
+      - ai-ninja-network
+    volumes:
+      - conversation-engine-logs:/app/logs:rw
+      - conversation-engine-models:/app/ml/models:rw
+      - conversation-engine-cache:/app/cache:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      <<: *healthcheck-defaults
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "15m"
+        max-file: "3"
+
+  profile-analytics:
+    build:
+      context: ./services/profile-analytics
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/profile-analytics:${VERSION:-latest}
+    container_name: ai-ninja-profile-analytics-prod
+    hostname: profile-analytics
+    <<: *security-opt
+    <<: *resource-limits-large
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3004
+      AZURE_TEXT_ANALYTICS_KEY: ${AZURE_TEXT_ANALYTICS_KEY}
+      AZURE_TEXT_ANALYTICS_ENDPOINT: ${AZURE_TEXT_ANALYTICS_ENDPOINT}
+      REDIS_URL: redis://redis-cluster:6379
+      DATABASE_URL: ${DATABASE_URL}
+    ports:
+      - "3004:3004"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    networks:
+      - ai-ninja-network
+    volumes:
+      - profile-analytics-logs:/app/logs:rw
+      - profile-analytics-models:/app/ml/models:rw
+      - profile-analytics-data:/app/data:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      <<: *healthcheck-defaults
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "15m"
+        max-file: "3"
+
+  # ===========================================
+  # Support Services
+  # ===========================================
+
+  user-management:
+    build:
+      context: ./services/user-management
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/user-management:${VERSION:-latest}
+    container_name: ai-ninja-user-management-prod
+    hostname: user-management
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3005
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
+      REDIS_URL: redis://redis-cluster:6379
+      DATABASE_URL: ${DATABASE_URL}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+    ports:
+      - "3005:3005"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    networks:
+      - ai-ninja-network
+    volumes:
+      - user-management-logs:/app/logs:rw
+      - user-management-uploads:/app/uploads:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      <<: *healthcheck-defaults
+
+  smart-whitelist:
+    build:
+      context: ./services/smart-whitelist-node
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/smart-whitelist:${VERSION:-latest}
+    container_name: ai-ninja-smart-whitelist-prod
+    hostname: smart-whitelist
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3006
+      REDIS_URL: redis://redis-cluster:6379
+      DATABASE_URL: ${DATABASE_URL}
+    ports:
+      - "3006:3006"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    networks:
+      - ai-ninja-network
+    volumes:
+      - smart-whitelist-logs:/app/logs:rw
+      - smart-whitelist-cache:/app/cache:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+      <<: *healthcheck-defaults
+
+  # ===========================================
+  # Platform Services
+  # ===========================================
+
+  configuration:
+    build:
+      context: ./services/configuration-service
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/configuration:${VERSION:-latest}
+    container_name: ai-ninja-configuration-prod
+    hostname: configuration
+    <<: *security-opt
+    <<: *resource-limits-small
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3007
+      REDIS_URL: redis://redis-cluster:6379
+      DATABASE_URL: ${DATABASE_URL}
+    ports:
+      - "3007:3007"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    networks:
+      - ai-ninja-network
+    volumes:
+      - configuration-logs:/app/logs:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
+      <<: *healthcheck-defaults
+
+  storage:
+    build:
+      context: ./services/storage
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/storage:${VERSION:-latest}
+    container_name: ai-ninja-storage-prod
+    hostname: storage
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3008
+      REDIS_URL: redis://redis-cluster:6379
+      DATABASE_URL: ${DATABASE_URL}
+      AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING}
+    ports:
+      - "3008:3008"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    networks:
+      - ai-ninja-network
+    volumes:
+      - storage-logs:/app/logs:rw
+      - storage-data:/app/data:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3008/health"]
+      <<: *healthcheck-defaults
+
+  monitoring:
+    build:
+      context: ./services/monitoring
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/monitoring:${VERSION:-latest}
+    container_name: ai-ninja-monitoring-prod
+    hostname: monitoring
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      <<: *common-variables
+      PORT: 3009
+      REDIS_URL: redis://redis-cluster:6379
+      DATABASE_URL: ${DATABASE_URL}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL}
+      PROMETHEUS_URL: http://prometheus:9090
+      GRAFANA_URL: http://grafana:3000
+    ports:
+      - "3009:3009"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+    networks:
+      - ai-ninja-network
+      - monitoring-network
+    volumes:
+      - monitoring-logs:/app/logs:rw
+      - monitoring-metrics:/app/metrics:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3009/health"]
+      <<: *healthcheck-defaults
+
+  # ===========================================
+  # Frontend
+  # ===========================================
+
+  admin-panel:
+    build:
+      context: ./frontend/admin-panel
+      dockerfile: Dockerfile.optimized
+      target: production
+    image: ai-ninja/admin-panel:${VERSION:-latest}
+    container_name: ai-ninja-admin-panel-prod
+    hostname: admin-panel
+    <<: *security-opt
+    <<: *resource-limits-small
+    <<: *restart-policy
+    ports:
+      - "80:80"
+    depends_on:
+      - phone-gateway
+      - user-management
+    networks:
+      - ai-ninja-network
+    volumes:
+      - admin-panel-logs:/var/log/nginx:rw
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      <<: *healthcheck-defaults
+
+  # ===========================================
+  # Data Layer - High Availability
+  # ===========================================
+
+  postgres-primary:
+    image: postgres:15.5-alpine
+    container_name: ai-ninja-postgres-primary-prod
+    hostname: postgres-primary
+    <<: *security-opt
+    <<: *resource-limits-large
+    <<: *restart-policy
+    environment:
+      POSTGRES_DB: ai_ninja
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD}
+      PGUSER: postgres
+    ports:
+      - "5432:5432"
+    networks:
+      - ai-ninja-network
+    volumes:
+      - postgres-primary-data:/var/lib/postgresql/data:rw
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+      - ./database/backups:/backups:rw
+      - ./database/config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_ninja"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: >
+      postgres
+      -c config_file=/etc/postgresql/postgresql.conf
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c max_connections=200
+      -c shared_buffers=512MB
+      -c effective_cache_size=2GB
+      -c work_mem=8MB
+      -c maintenance_work_mem=128MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+
+  postgres-replica:
+    image: postgres:15.5-alpine
+    container_name: ai-ninja-postgres-replica-prod
+    hostname: postgres-replica
+    <<: *security-opt
+    <<: *resource-limits-large
+    <<: *restart-policy
+    environment:
+      POSTGRES_DB: ai_ninja
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_MASTER_SERVICE: postgres-primary
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD}
+      PGUSER: postgres
+    ports:
+      - "5433:5432"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    networks:
+      - ai-ninja-network
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data:rw
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_ninja"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  redis-cluster:
+    image: redis:7.2-alpine
+    container_name: ai-ninja-redis-cluster-prod
+    hostname: redis-cluster
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    ports:
+      - "6379:6379"
+    networks:
+      - ai-ninja-network
+    volumes:
+      - redis-cluster-data:/data:rw
+      - ./config/redis/redis-production.conf:/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    command: redis-server /etc/redis/redis.conf
+
+  # ===========================================
+  # Monitoring Stack
+  # ===========================================
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: ai-ninja-prometheus-prod
+    hostname: prometheus
+    <<: *security-opt
+    <<: *resource-limits-medium
+    <<: *restart-policy
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring-network
+      - ai-ninja-network
+    volumes:
+      - prometheus-data:/prometheus:rw
+      - ./monitoring/prometheus/prometheus-production.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerting/rules:/etc/prometheus/rules:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: ai-ninja-grafana-prod
+    hostname: grafana
+    <<: *security-opt
+    <<: *resource-limits-small
+    <<: *restart-policy
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_INSTALL_PLUGINS: grafana-piechart-panel,grafana-worldmap-panel
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring-network
+    volumes:
+      - grafana-data:/var/lib/grafana:rw
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # Load Balancer & Reverse Proxy
+  # ===========================================
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: ai-ninja-nginx-prod
+    hostname: nginx
+    <<: *security-opt
+    <<: *resource-limits-small
+    <<: *restart-policy
+    ports:
+      - "443:443"
+      - "8443:8443"  # Admin panel HTTPS
+    depends_on:
+      - admin-panel
+      - phone-gateway
+      - user-management
+    networks:
+      - ai-ninja-network
+    volumes:
+      - ./config/nginx/nginx-production.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl/production:/etc/nginx/ssl:ro
+      - nginx-logs:/var/log/nginx:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# ===========================================
+# Networks
+# ===========================================
+
+networks:
+  ai-ninja-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
+    driver_opts:
+      com.docker.network.enable_ipv6: "false"
+      com.docker.network.bridge.name: ai-ninja-bridge
+
+  monitoring-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+          gateway: 172.21.0.1
+
+# ===========================================
+# Volumes
+# ===========================================
+
+volumes:
+  # Database volumes
+  postgres-primary-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/ai-ninja/data/postgres-primary
+  
+  postgres-replica-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/ai-ninja/data/postgres-replica
+
+  redis-cluster-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/ai-ninja/data/redis
+
+  # Monitoring volumes
+  prometheus-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/ai-ninja/data/prometheus
+
+  grafana-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/ai-ninja/data/grafana
+
+  # Service logs
+  phone-gateway-logs:
+    driver: local
+  realtime-processor-logs:
+    driver: local
+  conversation-engine-logs:
+    driver: local
+  profile-analytics-logs:
+    driver: local
+  user-management-logs:
+    driver: local
+  smart-whitelist-logs:
+    driver: local
+  configuration-logs:
+    driver: local
+  storage-logs:
+    driver: local
+  monitoring-logs:
+    driver: local
+  admin-panel-logs:
+    driver: local
+  nginx-logs:
+    driver: local
+
+  # Service data
+  phone-gateway-temp:
+    driver: local
+  realtime-processor-audio:
+    driver: local
+  realtime-processor-cache:
+    driver: local
+  conversation-engine-models:
+    driver: local
+  conversation-engine-cache:
+    driver: local
+  profile-analytics-models:
+    driver: local
+  profile-analytics-data:
+    driver: local
+  user-management-uploads:
+    driver: local
+  smart-whitelist-cache:
+    driver: local
+  storage-data:
+    driver: local
+  monitoring-metrics:
+    driver: local

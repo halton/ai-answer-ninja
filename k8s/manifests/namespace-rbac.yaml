@@ -1,0 +1,492 @@
+# =============================================================================
+# Namespace and RBAC Configuration
+# Complete security setup with proper service accounts and role bindings
+# =============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-ninja
+  labels:
+    name: ai-ninja
+    environment: production
+    app.kubernetes.io/name: ai-ninja
+    app.kubernetes.io/part-of: ai-ninja-system
+  annotations:
+    description: "AI Answer Ninja production namespace"
+    team: "ai-ninja-team"
+
+---
+# Network Policy for namespace isolation
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-ninja-network-policy
+  namespace: ai-ninja
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ai-ninja
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: ai-ninja
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+  - to: []  # Allow external traffic
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+    - protocol: UDP
+      port: 53
+
+---
+# =============================================================================
+# Service Accounts for each service
+# =============================================================================
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: phone-gateway-sa
+  namespace: ai-ninja
+  labels:
+    app: phone-gateway
+    tier: core
+automountServiceAccountToken: true
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: realtime-processor-sa
+  namespace: ai-ninja
+  labels:
+    app: realtime-processor
+    tier: core
+automountServiceAccountToken: true
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: conversation-engine-sa
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+automountServiceAccountToken: true
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: profile-analytics-sa
+  namespace: ai-ninja
+  labels:
+    app: profile-analytics
+    tier: core
+automountServiceAccountToken: true
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: user-management-sa
+  namespace: ai-ninja
+  labels:
+    app: user-management
+    tier: support
+automountServiceAccountToken: true
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: smart-whitelist-sa
+  namespace: ai-ninja
+  labels:
+    app: smart-whitelist
+    tier: support
+automountServiceAccountToken: true
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: configuration-sa
+  namespace: ai-ninja
+  labels:
+    app: configuration
+    tier: platform
+automountServiceAccountToken: true
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: storage-sa
+  namespace: ai-ninja
+  labels:
+    app: storage
+    tier: platform
+automountServiceAccountToken: true
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: monitoring-sa
+  namespace: ai-ninja
+  labels:
+    app: monitoring
+    tier: platform
+automountServiceAccountToken: true
+
+---
+# =============================================================================
+# Roles and Role Bindings
+# =============================================================================
+
+# Core services role - can read configs and secrets, create events
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ai-ninja
+  name: core-service-role
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---
+# Support services role - similar to core but with additional permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ai-ninja
+  name: support-service-role
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---
+# Platform services role - can manage configs and has broader permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ai-ninja
+  name: platform-service-role
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---
+# Monitoring service role - needs broader access for observability
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ai-ninja
+  name: monitoring-service-role
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list", "watch", "create", "patch"]
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---
+# =============================================================================
+# Role Bindings - Core Services
+# =============================================================================
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: phone-gateway-rolebinding
+  namespace: ai-ninja
+subjects:
+- kind: ServiceAccount
+  name: phone-gateway-sa
+  namespace: ai-ninja
+roleRef:
+  kind: Role
+  name: core-service-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: realtime-processor-rolebinding
+  namespace: ai-ninja
+subjects:
+- kind: ServiceAccount
+  name: realtime-processor-sa
+  namespace: ai-ninja
+roleRef:
+  kind: Role
+  name: core-service-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: conversation-engine-rolebinding
+  namespace: ai-ninja
+subjects:
+- kind: ServiceAccount
+  name: conversation-engine-sa
+  namespace: ai-ninja
+roleRef:
+  kind: Role
+  name: core-service-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: profile-analytics-rolebinding
+  namespace: ai-ninja
+subjects:
+- kind: ServiceAccount
+  name: profile-analytics-sa
+  namespace: ai-ninja
+roleRef:
+  kind: Role
+  name: core-service-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# =============================================================================
+# Role Bindings - Support Services
+# =============================================================================
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: user-management-rolebinding
+  namespace: ai-ninja
+subjects:
+- kind: ServiceAccount
+  name: user-management-sa
+  namespace: ai-ninja
+roleRef:
+  kind: Role
+  name: support-service-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: smart-whitelist-rolebinding
+  namespace: ai-ninja
+subjects:
+- kind: ServiceAccount
+  name: smart-whitelist-sa
+  namespace: ai-ninja
+roleRef:
+  kind: Role
+  name: support-service-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# =============================================================================
+# Role Bindings - Platform Services
+# =============================================================================
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: configuration-rolebinding
+  namespace: ai-ninja
+subjects:
+- kind: ServiceAccount
+  name: configuration-sa
+  namespace: ai-ninja
+roleRef:
+  kind: Role
+  name: platform-service-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: storage-rolebinding
+  namespace: ai-ninja
+subjects:
+- kind: ServiceAccount
+  name: storage-sa
+  namespace: ai-ninja
+roleRef:
+  kind: Role
+  name: platform-service-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: monitoring-rolebinding
+  namespace: ai-ninja
+subjects:
+- kind: ServiceAccount
+  name: monitoring-sa
+  namespace: ai-ninja
+roleRef:
+  kind: Role
+  name: monitoring-service-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# =============================================================================
+# Pod Security Policy (if PSP is enabled)
+# =============================================================================
+
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: ai-ninja-psp
+  namespace: ai-ninja
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  allowedCapabilities:
+    - NET_BIND_SERVICE
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'RunAsAny'
+
+---
+# Role for using PSP
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ai-ninja
+  name: psp-user
+rules:
+- apiGroups: ['policy']
+  resources: ['podsecuritypolicies']
+  verbs: ['use']
+  resourceNames:
+  - ai-ninja-psp
+
+---
+# Bind PSP role to all service accounts
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: psp-binding
+  namespace: ai-ninja
+roleRef:
+  kind: Role
+  name: psp-user
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: phone-gateway-sa
+  namespace: ai-ninja
+- kind: ServiceAccount
+  name: realtime-processor-sa
+  namespace: ai-ninja
+- kind: ServiceAccount
+  name: conversation-engine-sa
+  namespace: ai-ninja
+- kind: ServiceAccount
+  name: profile-analytics-sa
+  namespace: ai-ninja
+- kind: ServiceAccount
+  name: user-management-sa
+  namespace: ai-ninja
+- kind: ServiceAccount
+  name: smart-whitelist-sa
+  namespace: ai-ninja
+- kind: ServiceAccount
+  name: configuration-sa
+  namespace: ai-ninja
+- kind: ServiceAccount
+  name: storage-sa
+  namespace: ai-ninja
+- kind: ServiceAccount
+  name: monitoring-sa
+  namespace: ai-ninja

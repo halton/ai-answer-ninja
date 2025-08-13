@@ -1,0 +1,132 @@
+# =============================================================================
+# AI Answer Ninja Helm Chart
+# Complete microservices deployment with observability and security
+# =============================================================================
+
+apiVersion: v2
+name: ai-ninja
+description: AI Answer Ninja - Intelligent Phone Call Management System
+home: https://github.com/ai-ninja/ai-answer-ninja
+sources:
+  - https://github.com/ai-ninja/ai-answer-ninja
+maintainers:
+  - name: AI Ninja Team
+    email: team@ai-ninja.com
+    url: https://ai-ninja.com
+
+# Chart metadata
+type: application
+version: 1.0.0  # Chart version
+appVersion: "1.0.0"  # Application version
+
+# Keywords for chart discovery
+keywords:
+  - ai
+  - phone-system
+  - communication
+  - microservices
+  - azure
+  - machine-learning
+  - conversation-ai
+
+# Chart annotations
+annotations:
+  category: Communication
+  license: MIT
+  
+  # Operator support
+  "catalog.cattle.io/certified": "true"
+  "catalog.cattle.io/namespace": "ai-ninja"
+  "catalog.cattle.io/release-name": "ai-ninja"
+  
+  # Security scanning
+  "artifacthub.io/containsSecurityUpdates": "true"
+  "artifacthub.io/prerelease": "false"
+  "artifacthub.io/operator": "false"
+  
+  # Changes annotations
+  "artifacthub.io/changes": |
+    - kind: added
+      description: Complete microservices architecture
+    - kind: added
+      description: Azure services integration
+    - kind: added
+      description: Comprehensive monitoring and observability
+    - kind: added
+      description: Auto-scaling and resource management
+    - kind: added
+      description: Security hardening and RBAC
+  
+  # Images used
+  "artifacthub.io/images": |
+    - name: phone-gateway
+      image: ai-ninja/phone-gateway:1.0.0
+    - name: realtime-processor
+      image: ai-ninja/realtime-processor:1.0.0
+    - name: conversation-engine
+      image: ai-ninja/conversation-engine:1.0.0
+    - name: profile-analytics
+      image: ai-ninja/profile-analytics:1.0.0
+    - name: user-management
+      image: ai-ninja/user-management:1.0.0
+    - name: smart-whitelist
+      image: ai-ninja/smart-whitelist:1.0.0
+    - name: configuration
+      image: ai-ninja/configuration:1.0.0
+    - name: storage
+      image: ai-ninja/storage:1.0.0
+    - name: monitoring
+      image: ai-ninja/monitoring:1.0.0
+    - name: admin-panel
+      image: ai-ninja/admin-panel:1.0.0
+    - name: postgres
+      image: postgres:15.5-alpine
+    - name: redis
+      image: redis:7.2-alpine
+    - name: prometheus
+      image: prom/prometheus:v2.48.0
+    - name: grafana
+      image: grafana/grafana:10.2.2
+
+# Dependencies on other charts
+dependencies:
+  - name: postgresql
+    version: "13.2.24"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
+    tags:
+      - database
+  
+  - name: redis
+    version: "18.4.0"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: redis.enabled
+    tags:
+      - cache
+  
+  - name: prometheus
+    version: "25.8.0"
+    repository: "https://prometheus-community.github.io/helm-charts"
+    condition: monitoring.prometheus.enabled
+    tags:
+      - monitoring
+  
+  - name: grafana
+    version: "7.0.19"
+    repository: "https://grafana.github.io/helm-charts"
+    condition: monitoring.grafana.enabled
+    tags:
+      - monitoring
+  
+  - name: nginx-ingress
+    version: "4.8.3"
+    repository: "https://kubernetes.github.io/ingress-nginx"
+    condition: ingress.enabled
+    tags:
+      - networking
+
+# Minimum Kubernetes version
+kubeVersion: ">=1.25.0-0"
+
+# Icon for the chart
+icon: https://ai-ninja.com/assets/logo.png

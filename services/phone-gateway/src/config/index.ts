@@ -17,11 +17,20 @@ const configSchema = Joi.object({
       connectionString: Joi.string().required(),
       endpoint: Joi.string().required(),
       resourceId: Joi.string().required(),
+      webhookSecret: Joi.string().optional(),
     }),
     eventGrid: Joi.object({
       endpoint: Joi.string().required(),
       accessKey: Joi.string().required(),
+      topicName: Joi.string().optional(),
     }),
+    storage: Joi.object({
+      connectionString: Joi.string().optional(),
+      accountName: Joi.string().optional(),
+      accountKey: Joi.string().optional(),
+      recordingContainer: Joi.string().default('call-recordings'),
+      transcriptionContainer: Joi.string().default('call-transcriptions'),
+    }).optional(),
   }),
   
   database: Joi.object({
@@ -96,10 +105,19 @@ const rawConfig = {
       connectionString: process.env.AZURE_COMMUNICATION_CONNECTION_STRING || '',
       endpoint: process.env.AZURE_COMMUNICATION_ENDPOINT || '',
       resourceId: process.env.AZURE_COMMUNICATION_RESOURCE_ID || '',
+      webhookSecret: process.env.AZURE_WEBHOOK_SECRET,
     },
     eventGrid: {
       endpoint: process.env.AZURE_EVENT_GRID_ENDPOINT || '',
       accessKey: process.env.AZURE_EVENT_GRID_ACCESS_KEY || '',
+      topicName: process.env.AZURE_EVENT_GRID_TOPIC_NAME,
+    },
+    storage: {
+      connectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
+      accountName: process.env.AZURE_STORAGE_ACCOUNT_NAME,
+      accountKey: process.env.AZURE_STORAGE_ACCOUNT_KEY,
+      recordingContainer: process.env.AZURE_STORAGE_RECORDING_CONTAINER || 'call-recordings',
+      transcriptionContainer: process.env.AZURE_STORAGE_TRANSCRIPTION_CONTAINER || 'call-transcriptions',
     },
   },
   
@@ -180,10 +198,19 @@ export default config as {
       connectionString: string;
       endpoint: string;
       resourceId: string;
+      webhookSecret?: string;
     };
     eventGrid: {
       endpoint: string;
       accessKey: string;
+      topicName?: string;
+    };
+    storage?: {
+      connectionString?: string;
+      accountName?: string;
+      accountKey?: string;
+      recordingContainer: string;
+      transcriptionContainer: string;
     };
   };
   database: {

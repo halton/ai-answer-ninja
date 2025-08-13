@@ -51,11 +51,10 @@ import {
 
 import { sanitizeRequestBody } from '@/middleware/validation';
 
-// Import routes (we'll create these)
-// import authRoutes from '@/routes/auth';
-// import userRoutes from '@/routes/user';
-// import adminRoutes from '@/routes/admin';
-// import mfaRoutes from '@/routes/mfa';
+// Import routes
+import authRoutes from '@/routes/authRoutes';
+import { securityMonitor } from '@/services/securityMonitor';
+import { userProfileService } from '@/services/userProfile';
 
 /**
  * AI Answer Ninja User Management Service
@@ -189,12 +188,31 @@ class UserManagementServer {
       });
     });
 
-    // Placeholder for route implementations
-    // TODO: Implement actual routes
-    this.app.use('/api/auth', this.createPlaceholderRouter('Authentication routes'));
-    this.app.use('/api/users', authenticate, this.createPlaceholderRouter('User management routes'));
-    this.app.use('/api/admin', authenticate, this.createPlaceholderRouter('Admin routes'));
-    this.app.use('/api/mfa', authenticate, this.createPlaceholderRouter('MFA routes'));
+    // Main API routes
+    this.app.use('/api/auth', authRoutes);
+
+    // API monitoring middleware
+    this.app.use(async (req, res, next) => {
+      const startTime = Date.now();
+      
+      res.on('finish', async () => {
+        const responseTime = Date.now() - startTime;
+        const userId = (req as any).user?.id || null;
+        
+        // Monitor API request for security
+        await securityMonitor.monitorAPIRequest(
+          userId,
+          req.path,
+          req.method,
+          req.ip || 'unknown',
+          req.get('User-Agent') || 'unknown',
+          res.statusCode,
+          responseTime
+        );
+      });
+      
+      next();
+    });
 
     // API documentation placeholder
     this.app.get('/api', (req, res) => {
@@ -277,6 +295,26 @@ class UserManagementServer {
   }
 
   /**
+   * Initialize security monitoring
+   */
+  private initializeSecurityMonitoring(): void {
+    // Enable security monitoring
+    securityMonitor.setMonitoringEnabled(true);
+
+    // Listen for security events
+    securityMonitor.on('security_threat', (threat) => {
+      logger.warn('Security threat detected', {
+        type: threat.type,
+        severity: threat.severity,
+        userId: threat.userId,
+        details: threat.details
+      });
+    });
+
+    logger.info('Security monitoring initialized');
+  }
+
+  /**
    * Setup periodic cleanup tasks
    */
   private setupCleanupTasks(): void {
@@ -322,6 +360,9 @@ class UserManagementServer {
       // Initialize external dependencies
       await this.initializeDatabase();
       await this.initializeRedis();
+
+      // Initialize security monitoring
+      this.initializeSecurityMonitoring();
 
       // Setup periodic tasks
       this.setupCleanupTasks();

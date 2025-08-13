@@ -1,0 +1,537 @@
+# AI Answer Ninja - Infrastructure CI/CD Pipeline
+# This workflow manages infrastructure deployment across environments
+
+name: Infrastructure Deployment
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'infrastructure/**'
+      - '.github/workflows/infrastructure.yml'
+  
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'infrastructure/**'
+  
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      auto_approve:
+        description: 'Auto approve apply (use with caution)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  TERRAFORM_VERSION: '1.6.0'
+  AZURE_REGION: 'eastasia'
+  TF_VAR_environment: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}
+
+jobs:
+  # Job to determine deployment strategy
+  determine-strategy:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      action: ${{ steps.action.outputs.action }}
+      auto_approve: ${{ steps.approve.outputs.auto_approve }}
+      should_deploy: ${{ steps.deploy.outputs.should_deploy }}
+    steps:
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/develop" ]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine action
+        id: action
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "action=${{ github.event.inputs.action }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "action=plan" >> $GITHUB_OUTPUT
+          else
+            echo "action=apply" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine auto approve
+        id: approve
+        run: |
+          if [ "${{ github.event.inputs.auto_approve }}" == "true" ]; then
+            echo "auto_approve=true" >> $GITHUB_OUTPUT
+          else
+            echo "auto_approve=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Should deploy
+        id: deploy
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+          else
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          fi
+
+  # Validate Terraform configuration
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform format check
+        working-directory: infrastructure/terraform
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validation
+        working-directory: infrastructure/terraform
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: Run tflint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: TFLint
+        working-directory: infrastructure/terraform
+        run: |
+          tflint --init
+          tflint --recursive
+
+  # Security scan
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infrastructure/terraform
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-report.sarif
+
+      - name: Upload Checkov results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-report.sarif
+
+      - name: Run TFSec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: infrastructure/terraform
+
+  # Cost estimation
+  cost-estimation:
+    runs-on: ubuntu-latest
+    needs: [determine-strategy]
+    if: needs.determine-strategy.outputs.action != 'destroy'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Azure CLI Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform
+        run: |
+          terraform init
+        env:
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+      - name: Terraform Plan for Cost Estimation
+        working-directory: infrastructure/terraform
+        run: |
+          terraform plan \
+            -var-file="environments/${{ needs.determine-strategy.outputs.environment }}/terraform.tfvars" \
+            -out=tfplan
+        env:
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+      - name: Estimate costs with Infracost
+        uses: infracost/actions/setup@v2
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+      - name: Generate cost estimate
+        working-directory: infrastructure/terraform
+        run: |
+          infracost breakdown --path . \
+            --terraform-plan-path tfplan \
+            --format json \
+            --out-file infracost-base.json
+
+      - name: Post cost estimate comment
+        uses: infracost/actions/comment@v1
+        if: github.event_name == 'pull_request'
+        with:
+          path: infrastructure/terraform/infracost-base.json
+          behavior: update
+
+  # Plan infrastructure changes
+  plan:
+    runs-on: ubuntu-latest
+    needs: [validate, security-scan, determine-strategy]
+    if: always() && needs.validate.result == 'success' && needs.security-scan.result == 'success'
+    environment: ${{ needs.determine-strategy.outputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Azure CLI Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=ai-answer-ninja-terraform-state" \
+            -backend-config="storage_account_name=aianswerninjatfstate" \
+            -backend-config="container_name=terraform-state" \
+            -backend-config="key=${{ needs.determine-strategy.outputs.environment }}/terraform.tfstate"
+        env:
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+      - name: Terraform Plan
+        working-directory: infrastructure/terraform
+        run: |
+          if [ "${{ needs.determine-strategy.outputs.action }}" == "destroy" ]; then
+            terraform plan -destroy \
+              -var-file="environments/${{ needs.determine-strategy.outputs.environment }}/terraform.tfvars" \
+              -out=tfplan \
+              -detailed-exitcode
+          else
+            terraform plan \
+              -var-file="environments/${{ needs.determine-strategy.outputs.environment }}/terraform.tfvars" \
+              -out=tfplan \
+              -detailed-exitcode
+          fi
+        env:
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ needs.determine-strategy.outputs.environment }}
+          path: infrastructure/terraform/tfplan
+          retention-days: 30
+
+      - name: Comment PR with plan
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+            
+            // Get plan output
+            const planOutput = execSync(
+              'cd infrastructure/terraform && terraform show -no-color tfplan',
+              { encoding: 'utf8' }
+            );
+            
+            const body = `## Terraform Plan - ${{ needs.determine-strategy.outputs.environment }}
+            
+            <details>
+            <summary>📋 Click to expand plan details</summary>
+            
+            \`\`\`terraform
+            ${planOutput}
+            \`\`\`
+            </details>
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  # Apply infrastructure changes
+  apply:
+    runs-on: ubuntu-latest
+    needs: [plan, determine-strategy]
+    if: |
+      always() && 
+      needs.plan.result == 'success' && 
+      needs.determine-strategy.outputs.should_deploy == 'true' && 
+      (needs.determine-strategy.outputs.action == 'apply' || needs.determine-strategy.outputs.action == 'destroy')
+    environment: ${{ needs.determine-strategy.outputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Azure CLI Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ needs.determine-strategy.outputs.environment }}
+          path: infrastructure/terraform/
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=ai-answer-ninja-terraform-state" \
+            -backend-config="storage_account_name=aianswerninjatfstate" \
+            -backend-config="container_name=terraform-state" \
+            -backend-config="key=${{ needs.determine-strategy.outputs.environment }}/terraform.tfstate"
+        env:
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+      - name: Manual Approval for Production
+        if: needs.determine-strategy.outputs.environment == 'prod' && needs.determine-strategy.outputs.auto_approve != 'true'
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.TOKEN }}
+          approvers: devops-team,engineering-leads
+          minimum-approvals: 2
+          issue-title: "Production Infrastructure Deployment Approval"
+          issue-body: |
+            **Environment**: ${{ needs.determine-strategy.outputs.environment }}
+            **Action**: ${{ needs.determine-strategy.outputs.action }}
+            **Branch**: ${{ github.ref }}
+            **Commit**: ${{ github.sha }}
+            
+            Please review the Terraform plan and approve this production deployment.
+
+      - name: Terraform Apply
+        working-directory: infrastructure/terraform
+        run: terraform apply tfplan
+        env:
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+      - name: Save Terraform Outputs
+        working-directory: infrastructure/terraform
+        run: |
+          terraform output -json > terraform-outputs.json
+        env:
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+      - name: Upload outputs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-${{ needs.determine-strategy.outputs.environment }}
+          path: infrastructure/terraform/terraform-outputs.json
+          retention-days: 90
+
+  # Post-deployment verification
+  verify:
+    runs-on: ubuntu-latest
+    needs: [apply, determine-strategy]
+    if: always() && needs.apply.result == 'success' && needs.determine-strategy.outputs.action != 'destroy'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download outputs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-outputs-${{ needs.determine-strategy.outputs.environment }}
+          path: ./
+
+      - name: Azure CLI Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure kubectl
+        run: |
+          # Extract cluster info from Terraform outputs
+          CLUSTER_NAME=$(jq -r '.aks_cluster_name.value' terraform-outputs.json)
+          RESOURCE_GROUP=$(jq -r '.primary_resource_group_name.value' terraform-outputs.json)
+          
+          if [ "$CLUSTER_NAME" != "null" ] && [ "$RESOURCE_GROUP" != "null" ]; then
+            az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --overwrite-existing
+            kubectl cluster-info
+          else
+            echo "Could not retrieve AKS cluster information"
+          fi
+
+      - name: Run health checks
+        run: |
+          # Basic cluster health checks
+          if kubectl cluster-info &> /dev/null; then
+            echo "✅ Kubernetes cluster is accessible"
+            
+            # Check node status
+            READY_NODES=$(kubectl get nodes --no-headers | grep -c " Ready")
+            echo "✅ $READY_NODES nodes are ready"
+            
+            # Check system pods
+            SYSTEM_PODS_NOT_READY=$(kubectl get pods -n kube-system --field-selector=status.phase!=Running --no-headers | wc -l)
+            if [ "$SYSTEM_PODS_NOT_READY" -eq 0 ]; then
+              echo "✅ All system pods are running"
+            else
+              echo "⚠️ $SYSTEM_PODS_NOT_READY system pods are not ready"
+            fi
+          else
+            echo "❌ Kubernetes cluster is not accessible"
+            exit 1
+          fi
+          
+          # Check application endpoints if available
+          TRAFFIC_MANAGER_FQDN=$(jq -r '.traffic_manager_fqdn.value // empty' terraform-outputs.json)
+          if [ -n "$TRAFFIC_MANAGER_FQDN" ]; then
+            echo "Testing Traffic Manager endpoint: $TRAFFIC_MANAGER_FQDN"
+            if curl -f -s --max-time 30 "https://$TRAFFIC_MANAGER_FQDN/health" > /dev/null 2>&1; then
+              echo "✅ Application endpoint is accessible"
+            else
+              echo "⚠️ Application endpoint is not accessible (may be expected for new deployments)"
+            fi
+          fi
+
+  # Notify deployment status
+  notify:
+    runs-on: ubuntu-latest
+    needs: [apply, verify, determine-strategy]
+    if: always() && (needs.apply.result != 'skipped' || needs.verify.result != 'skipped')
+    
+    steps:
+      - name: Determine status
+        id: status
+        run: |
+          if [ "${{ needs.apply.result }}" == "success" ] && [ "${{ needs.verify.result }}" == "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=✅ Infrastructure deployment completed successfully" >> $GITHUB_OUTPUT
+          elif [ "${{ needs.apply.result }}" == "success" ] && [ "${{ needs.verify.result }}" == "failure" ]; then
+            echo "status=warning" >> $GITHUB_OUTPUT
+            echo "message=⚠️ Infrastructure deployed but verification failed" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=❌ Infrastructure deployment failed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Slack notification
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "text": "${{ steps.status.outputs.message }}",
+              "attachments": [
+                {
+                  "color": "${{ steps.status.outputs.status == 'success' && 'good' || steps.status.outputs.status == 'warning' && 'warning' || 'danger' }}",
+                  "fields": [
+                    {
+                      "title": "Environment",
+                      "value": "${{ needs.determine-strategy.outputs.environment }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Action",
+                      "value": "${{ needs.determine-strategy.outputs.action }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Branch",
+                      "value": "${{ github.ref }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Commit",
+                      "value": "${{ github.sha }}",
+                      "short": true
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

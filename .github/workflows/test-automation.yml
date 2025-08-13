@@ -1,0 +1,414 @@
+name: Comprehensive Test Automation Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run comprehensive nightly tests at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - unit
+        - integration
+        - e2e
+        - performance
+        - security
+        - load
+
+env:
+  NODE_VERSION: '18.x'
+  PYTHON_VERSION: '3.11'
+  POSTGRES_VERSION: '15'
+  REDIS_VERSION: '7'
+
+jobs:
+  # 集成测试
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'integration'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: ai_answer_ninja_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Wait for services to be ready
+        run: |
+          # Wait for PostgreSQL
+          until pg_isready -h localhost -p 5432; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+          
+          # Wait for Redis
+          until redis-cli -h localhost -p 6379 ping; do
+            echo "Waiting for Redis..."
+            sleep 2
+          done
+
+      - name: Setup test database
+        run: |
+          npm run db:migrate:test
+          npm run db:seed:test
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5432/ai_answer_ninja_test
+          REDIS_URL: redis://localhost:6379
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5432/ai_answer_ninja_test
+          REDIS_URL: redis://localhost:6379
+          AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY_TEST }}
+          AZURE_SPEECH_REGION: eastus
+          AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY_TEST }}
+
+      - name: Upload integration test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results
+          path: |
+            test-results/
+            coverage/
+
+  # 端到端测试
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'e2e'
+    
+    strategy:
+      matrix:
+        browser: [chromium, firefox, webkit]
+        
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Build application
+        run: npm run build
+
+      - name: Start test services
+        run: |
+          # 启动测试环境的微服务
+          docker-compose -f docker-compose.test.yml up -d
+          
+          # 等待服务启动
+          sleep 30
+          
+          # 健康检查
+          npm run health:check:test
+
+      - name: Run E2E tests on ${{ matrix.browser }}
+        run: npx playwright test --project=${{ matrix.browser }}
+        env:
+          BASE_URL: http://localhost:3000
+          API_BASE_URL: http://localhost:3001
+
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-results-${{ matrix.browser }}
+          path: |
+            playwright-report/
+            test-results/
+
+      - name: Cleanup test services
+        if: always()
+        run: docker-compose -f docker-compose.test.yml down -v
+
+  # 性能和负载测试
+  performance-tests:
+    name: Performance & Load Tests
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'performance'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install K6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Start test application
+        run: |
+          npm run start:test &
+          sleep 30
+          
+          # 验证应用启动
+          curl -f http://localhost:3001/health || exit 1
+
+      - name: Run API performance tests
+        run: k6 run tests/performance/api-load-test.js
+        continue-on-error: true
+
+      - name: Run voice processing performance tests
+        run: k6 run tests/performance/voice-processing-load-test.js
+        continue-on-error: true
+
+      - name: Run stress tests
+        run: k6 run tests/performance/stress-test.js
+        continue-on-error: true
+
+      - name: Lighthouse CI
+        run: |
+          npm install -g @lhci/cli@0.12.x
+          lhci autorun
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+        continue-on-error: true
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-test-results
+          path: |
+            performance-results/
+            lighthouse-results/
+
+  # 安全渗透测试
+  security-tests:
+    name: Security Penetration Tests
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'security'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start application for security testing
+        run: |
+          npm run start:test &
+          sleep 30
+
+      - name: Run OWASP ZAP security scan
+        uses: zaproxy/action-full-scan@v0.7.0
+        with:
+          target: 'http://localhost:3001'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+        continue-on-error: true
+
+      - name: Run API security tests with Newman
+        run: |
+          npm install -g newman
+          newman run tests/security/api-security-tests.json \
+            --environment tests/security/test-environment.json \
+            --reporters cli,html \
+            --reporter-html-export security-test-results.html
+        continue-on-error: true
+
+      - name: Upload security test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-test-results
+          path: |
+            security-test-results.html
+            zap-report.html
+
+  # 数据库测试
+  database-tests:
+    name: Database Tests
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.test_suite == 'all'
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: ai_answer_ninja_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run database migration tests
+        run: npm run test:db:migrations
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5432/ai_answer_ninja_test
+
+      - name: Run database performance tests
+        run: npm run test:db:performance
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5432/ai_answer_ninja_test
+
+      - name: Test database backup and restore
+        run: npm run test:db:backup-restore
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5432/ai_answer_ninja_test
+
+  # 测试报告汇总
+  test-summary:
+    name: Test Summary & Reporting
+    runs-on: ubuntu-latest
+    needs: [integration-tests, e2e-tests, performance-tests, security-tests, database-tests]
+    if: always()
+
+    steps:
+      - name: Download all test artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Generate comprehensive test report
+        run: |
+          echo "# Test Automation Summary" > test-summary.md
+          echo "" >> test-summary.md
+          echo "## Test Results" >> test-summary.md
+          echo "- Integration Tests: ${{ needs.integration-tests.result }}" >> test-summary.md
+          echo "- E2E Tests: ${{ needs.e2e-tests.result }}" >> test-summary.md
+          echo "- Performance Tests: ${{ needs.performance-tests.result }}" >> test-summary.md
+          echo "- Security Tests: ${{ needs.security-tests.result }}" >> test-summary.md
+          echo "- Database Tests: ${{ needs.database-tests.result }}" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          # 添加详细的测试统计信息
+          if [ -d "integration-test-results" ]; then
+            echo "## Integration Test Details" >> test-summary.md
+            echo "\`\`\`" >> test-summary.md
+            cat integration-test-results/summary.txt 2>/dev/null || echo "No detailed results available" >> test-summary.md
+            echo "\`\`\`" >> test-summary.md
+          fi
+
+      - name: Upload test summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-summary-report
+          path: test-summary.md
+
+      - name: Comment PR with test results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('test-summary.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+      - name: Notify Teams on test failure
+        if: failure()
+        uses: aliencube/microsoft-teams-actions@v0.8.0
+        with:
+          webhook_uri: ${{ secrets.MS_TEAMS_WEBHOOK_URL }}
+          title: 'Test Automation Failed'
+          text: 'Automated test suite failed for commit ${{ github.sha }}'
+          theme_color: 'ff0000'
+
+      - name: Notify Teams on test success
+        if: success() && github.event_name == 'schedule'
+        uses: aliencube/microsoft-teams-actions@v0.8.0
+        with:
+          webhook_uri: ${{ secrets.MS_TEAMS_WEBHOOK_URL }}
+          title: 'Nightly Tests Passed'
+          text: 'All automated tests passed for commit ${{ github.sha }}'
+          theme_color: '00ff00'

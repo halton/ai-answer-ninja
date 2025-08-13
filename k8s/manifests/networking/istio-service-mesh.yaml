@@ -1,0 +1,629 @@
+# =============================================================================
+# Istio Service Mesh Configuration
+# Advanced traffic management, security, and observability
+# =============================================================================
+
+# =============================================================================
+# Gateway Configuration
+# =============================================================================
+
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: ai-ninja-gateway
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  # HTTPS traffic
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: ai-ninja-tls-secret
+    hosts:
+    - api.ai-ninja.com
+    - ws.ai-ninja.com
+    - admin.ai-ninja.com
+    - app.ai-ninja.com
+  # HTTP redirect to HTTPS
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - api.ai-ninja.com
+    - ws.ai-ninja.com
+    - admin.ai-ninja.com
+    - app.ai-ninja.com
+    tls:
+      httpsRedirect: true
+  # WebSocket specific port
+  - port:
+      number: 8080
+      name: websocket
+      protocol: HTTP
+    hosts:
+    - ws.ai-ninja.com
+
+---
+# =============================================================================
+# Virtual Services for Traffic Routing
+# =============================================================================
+
+# Main API Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ai-ninja-api-vs
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: virtual-service
+spec:
+  hosts:
+  - api.ai-ninja.com
+  gateways:
+  - ai-ninja-gateway
+  http:
+  # Health check routes
+  - match:
+    - uri:
+        exact: /health
+    route:
+    - destination:
+        host: phone-gateway-service.ai-ninja.svc.cluster.local
+        port:
+          number: 3001
+    timeout: 10s
+    retries:
+      attempts: 3
+      perTryTimeout: 3s
+
+  # Authentication routes
+  - match:
+    - uri:
+        prefix: /auth
+    - uri:
+        prefix: /users
+    route:
+    - destination:
+        host: user-management-service.ai-ninja.svc.cluster.local
+        port:
+          number: 3005
+    timeout: 30s
+    retries:
+      attempts: 2
+      perTryTimeout: 10s
+
+  # Phone gateway routes
+  - match:
+    - uri:
+        prefix: /calls
+    - uri:
+        prefix: /webhooks
+    route:
+    - destination:
+        host: phone-gateway-service.ai-ninja.svc.cluster.local
+        port:
+          number: 3001
+    timeout: 60s
+    retries:
+      attempts: 2
+      perTryTimeout: 20s
+
+  # Analytics routes
+  - match:
+    - uri:
+        prefix: /analytics
+    route:
+    - destination:
+        host: profile-analytics-service.ai-ninja.svc.cluster.local
+        port:
+          number: 3004
+    timeout: 45s
+
+  # Configuration routes
+  - match:
+    - uri:
+        prefix: /config
+    route:
+    - destination:
+        host: configuration-service.ai-ninja.svc.cluster.local
+        port:
+          number: 3007
+    timeout: 15s
+
+  # Storage routes
+  - match:
+    - uri:
+        prefix: /storage
+    route:
+    - destination:
+        host: storage-service.ai-ninja.svc.cluster.local
+        port:
+          number: 3008
+    timeout: 120s
+
+  # Whitelist routes
+  - match:
+    - uri:
+        prefix: /whitelist
+    route:
+    - destination:
+        host: smart-whitelist-service.ai-ninja.svc.cluster.local
+        port:
+          number: 3006
+    timeout: 20s
+
+  # Default route
+  - route:
+    - destination:
+        host: phone-gateway-service.ai-ninja.svc.cluster.local
+        port:
+          number: 3001
+
+---
+# WebSocket Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ai-ninja-websocket-vs
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: websocket-vs
+spec:
+  hosts:
+  - ws.ai-ninja.com
+  gateways:
+  - ai-ninja-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /ws
+    - uri:
+        prefix: /realtime
+    route:
+    - destination:
+        host: realtime-processor-service.ai-ninja.svc.cluster.local
+        port:
+          number: 8080
+    timeout: 0s  # No timeout for WebSocket connections
+    websocketUpgrade: true
+
+---
+# Admin Panel Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ai-ninja-admin-vs
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: admin-vs
+spec:
+  hosts:
+  - admin.ai-ninja.com
+  - app.ai-ninja.com
+  gateways:
+  - ai-ninja-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /api
+    rewrite:
+      uri: /
+    route:
+    - destination:
+        host: phone-gateway-service.ai-ninja.svc.cluster.local
+        port:
+          number: 3001
+  - route:
+    - destination:
+        host: admin-panel-service.ai-ninja.svc.cluster.local
+        port:
+          number: 80
+
+---
+# =============================================================================
+# Destination Rules for Load Balancing and Circuit Breaking
+# =============================================================================
+
+# Phone Gateway Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: phone-gateway-dr
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: destination-rule
+spec:
+  host: phone-gateway-service.ai-ninja.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_REQUEST
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+        tcpKeepalive:
+          time: 7200s
+          interval: 75s
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        idleTimeout: 60s
+        h2UpgradePolicy: UPGRADE
+    circuitBreaker:
+      consecutiveGatewayErrors: 5
+      consecutiveServerErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      consecutiveServerErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+
+---
+# Realtime Processor Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: realtime-processor-dr
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: destination-rule
+spec:
+  host: realtime-processor-service.ai-ninja.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+      consistentHash:
+        httpHeaderName: "X-User-ID"  # Session affinity for WebSocket
+    connectionPool:
+      tcp:
+        maxConnections: 50
+        connectTimeout: 30s
+      http:
+        http1MaxPendingRequests: 25
+        http2MaxRequests: 50
+        maxRequestsPerConnection: 5
+        maxRetries: 2
+        idleTimeout: 300s  # Longer for WebSocket
+    circuitBreaker:
+      consecutiveGatewayErrors: 3
+      consecutiveServerErrors: 3
+      interval: 60s
+      baseEjectionTime: 60s
+      maxEjectionPercent: 30
+
+---
+# Conversation Engine Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: conversation-engine-dr
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: destination-rule
+spec:
+  host: conversation-engine-service.ai-ninja.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_REQUEST
+    connectionPool:
+      tcp:
+        maxConnections: 75
+        connectTimeout: 30s
+      http:
+        http1MaxPendingRequests: 40
+        http2MaxRequests: 80
+        maxRequestsPerConnection: 8
+        maxRetries: 2
+        idleTimeout: 120s
+    circuitBreaker:
+      consecutiveGatewayErrors: 3
+      consecutiveServerErrors: 3
+      interval: 45s
+      baseEjectionTime: 45s
+      maxEjectionPercent: 40
+
+---
+# =============================================================================
+# Service Entries for External Services
+# =============================================================================
+
+# Azure OpenAI Service Entry
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: azure-openai-se
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: service-entry
+spec:
+  hosts:
+  - "*.openai.azure.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+
+---
+# Azure Speech Services Entry
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: azure-speech-se
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: service-entry
+spec:
+  hosts:
+  - "*.cognitiveservices.azure.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+
+---
+# Azure Communication Services Entry
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: azure-communication-se
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: service-entry
+spec:
+  hosts:
+  - "*.communication.azure.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+
+---
+# =============================================================================
+# Security Policies
+# =============================================================================
+
+# Peer Authentication - Enable mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: ai-ninja-mtls
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: security
+spec:
+  mtls:
+    mode: STRICT
+
+---
+# Authorization Policy - Default Deny
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: ai-ninja-default-deny
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: security
+spec:
+  {}  # Empty policy = deny all
+
+---
+# Authorization Policy - Allow ingress traffic
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: ai-ninja-allow-ingress
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: security
+spec:
+  selector:
+    matchLabels:
+      tier: core
+  rules:
+  - from:
+    - source:
+        namespaces: ["istio-system"]
+  - to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+
+---
+# Authorization Policy - Allow inter-service communication
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: ai-ninja-allow-internal
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: security
+spec:
+  rules:
+  - from:
+    - source:
+        namespaces: ["ai-ninja"]
+  - to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+
+---
+# Authorization Policy - Allow monitoring
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: ai-ninja-allow-monitoring
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: security
+spec:
+  rules:
+  - from:
+    - source:
+        namespaces: ["monitoring", "istio-system"]
+        principals: ["cluster.local/ns/monitoring/sa/prometheus"]
+  - to:
+    - operation:
+        methods: ["GET"]
+        paths: ["/metrics", "/health", "/ready"]
+
+---
+# =============================================================================
+# Traffic Policies
+# =============================================================================
+
+# Retry Policy
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ai-ninja-retry-policy
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: traffic-policy
+spec:
+  hosts:
+  - conversation-engine-service.ai-ninja.svc.cluster.local
+  http:
+  - retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: gateway-error,connect-failure,refused-stream
+    route:
+    - destination:
+        host: conversation-engine-service.ai-ninja.svc.cluster.local
+
+---
+# Fault Injection for Testing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ai-ninja-fault-injection
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: fault-injection
+spec:
+  hosts:
+  - profile-analytics-service.ai-ninja.svc.cluster.local
+  http:
+  - match:
+    - headers:
+        x-chaos-test:
+          exact: "true"
+    fault:
+      delay:
+        percentage:
+          value: 10
+        fixedDelay: 5s
+      abort:
+        percentage:
+          value: 5
+        httpStatus: 503
+    route:
+    - destination:
+        host: profile-analytics-service.ai-ninja.svc.cluster.local
+
+---
+# =============================================================================
+# Traffic Splitting for Canary Deployments
+# =============================================================================
+
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ai-ninja-canary-deployment
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: canary
+spec:
+  hosts:
+  - phone-gateway-service.ai-ninja.svc.cluster.local
+  http:
+  - match:
+    - headers:
+        x-canary:
+          exact: "true"
+    route:
+    - destination:
+        host: phone-gateway-service.ai-ninja.svc.cluster.local
+        subset: canary
+      weight: 100
+  - route:
+    - destination:
+        host: phone-gateway-service.ai-ninja.svc.cluster.local
+        subset: stable
+      weight: 90
+    - destination:
+        host: phone-gateway-service.ai-ninja.svc.cluster.local
+        subset: canary
+      weight: 10
+
+---
+# =============================================================================
+# Observability Configuration
+# =============================================================================
+
+# Telemetry Configuration
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: ai-ninja-telemetry
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    component: observability
+spec:
+  metrics:
+  - providers:
+    - name: prometheus
+  - overrides:
+    - match:
+        metric: ALL_METRICS
+      tagOverrides:
+        destination_service_name:
+          value: "{{.destination_service_name | default \"unknown\"}}"
+        source_service_name:
+          value: "{{.source_service_name | default \"unknown\"}}"
+  tracing:
+  - providers:
+    - name: jaeger
+  accessLogging:
+  - providers:
+    - name: otel

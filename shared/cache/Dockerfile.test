@@ -1,0 +1,17 @@
+FROM node:18-alpine
+
+# 设置工作目录
+WORKDIR /app
+
+# 安装依赖
+COPY package*.json ./
+RUN npm ci --only=development
+
+# 复制源代码
+COPY . .
+
+# 构建TypeScript
+RUN npm run build
+
+# 运行测试的默认命令
+CMD ["npm", "test"]

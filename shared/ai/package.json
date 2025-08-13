@@ -1,0 +1,72 @@
+{
+  "name": "@ai-answer-ninja/ai-performance",
+  "version": "1.0.0",
+  "description": "AI性能优化基础设施 - 预测式响应系统和智能缓存",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "ai",
+    "performance",
+    "optimization",
+    "cache",
+    "prediction",
+    "latency",
+    "precompute",
+    "machine-learning",
+    "response-generation"
+  ],
+  "author": "AI Answer Ninja Team",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.2",
+    "ioredis": "^5.3.2",
+    "winston": "^3.11.0",
+    "uuid": "^9.0.1",
+    "@azure/cognitiveservices-speech": "^1.33.1",
+    "@azure/openai": "^1.0.0-beta.8",
+    "@azure/text-analytics": "^5.1.0",
+    "node-cache": "^5.1.2",
+    "crypto-js": "^4.2.0",
+    "lodash": "^4.17.21",
+    "ml-matrix": "^6.10.8",
+    "natural": "^6.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/jest": "^29.5.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.45.0",
+    "jest": "^29.6.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.1.0"
+  },
+  "peerDependencies": {
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ai-answer-ninja/ai-answer-ninja.git",
+    "directory": "shared/ai"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  }
+}

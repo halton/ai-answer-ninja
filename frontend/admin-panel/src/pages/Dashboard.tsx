@@ -17,7 +17,10 @@ import {
   Divider,
   Grid,
   Flex,
-  theme
+  theme,
+  Tabs,
+  DatePicker,
+  Select
 } from 'antd'
 import {
   PhoneOutlined,
@@ -41,18 +44,25 @@ import {
   LineChartOutlined,
   DashboardOutlined,
   FireOutlined,
-  BulbOutlined
+  BulbOutlined,
+  SoundOutlined,
+  SecurityScanOutlined
 } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import { useNavigate } from 'react-router-dom'
 import { useWebSocket } from '@/services/websocket'
 import { useAuthStore, useUIStore, useSystemStore } from '@/store'
+import { motion } from 'framer-motion'
+import MetricsCard from '@/components/ui/MetricsCard'
+import AdvancedChart from '@/components/ui/AdvancedChart'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 
 dayjs.extend(relativeTime)
 
 const { Title, Text } = Typography
+const { TabPane } = Tabs
+const { RangePicker } = DatePicker
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate()
@@ -429,183 +439,367 @@ const Dashboard: React.FC = () => {
     )
   }
 
+  // 生成图表数据
+  const chartData = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const date = dayjs().subtract(6 - i, 'days')
+      return {
+        name: date.format('MM-DD'),
+        calls: Math.floor(Math.random() * 200) + 50,
+        blocked: Math.floor(Math.random() * 80) + 20,
+        transferred: Math.floor(Math.random() * 30) + 5,
+        timestamp: date.toISOString()
+      }
+    })
+  }, [])
+
   return (
-    <div className="page-container fade-in">
-      {/* 页面标题 */}
-      <div className="page-header">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div className="p-6 min-h-screen bg-gray-50">
+      {/* 页面标题和控制区 */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between">
           <div>
-            <Title level={4} className="page-title">
-              仪表盘
-            </Title>
-            <Text className="page-description">
-              欢迎回来，{user?.name || '管理员'}！ 系统运行正常
+            <Title level={2} className="text-gray-900 mb-1">实时监控面板</Title>
+            <Text className="text-gray-600">
+              欢迎回来，{user?.name || '管理员'}！
               <Badge 
                 status={connected ? 'success' : 'error'} 
                 text={connected ? '实时连接' : '连接断开'}
-                style={{ marginLeft: 16 }}
+                className="ml-4"
               />
             </Text>
           </div>
           
-          <Button 
-            icon={<ReloadOutlined />}
-            onClick={() => window.location.reload()}
-          >
-            刷新数据
-          </Button>
+          <Space>
+            <RangePicker
+              defaultValue={[dayjs().subtract(7, 'days'), dayjs()]}
+              format="YYYY-MM-DD"
+            />
+            <Select defaultValue="realtime" style={{ width: 120 }}>
+              <Select.Option value="realtime">实时</Select.Option>
+              <Select.Option value="hourly">每小时</Select.Option>
+              <Select.Option value="daily">每日</Select.Option>
+            </Select>
+            <Button 
+              icon={<ReloadOutlined />}
+              onClick={handleRefresh}
+              loading={refreshing}
+            >
+              刷新
+            </Button>
+          </Space>
         </div>
       </div>
 
-      {/* 统计卡片 */}
-      <div className="stats-grid">
-        {statsCards.map((card, index) => (
-          <Card
-            key={index}
-            className="stats-card"
-            hoverable
-            onClick={() => navigate(card.path)}
-            style={{ cursor: 'pointer' }}
+      <Tabs defaultActiveKey="overview" size="large">
+        {/* 系统概览 */}
+        <TabPane tab="系统概览" key="overview">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
           >
-            <div className="stats-content">
-              <div className="stats-info">
-                <div className="stats-value">
-                  {card.value.toLocaleString()}
-                </div>
-                <div className="stats-label">
-                  {card.title}
-                </div>
-                <div className={`stats-trend ${card.growth >= 0 ? 'positive' : 'negative'}`}>
-                  {card.growth >= 0 ? (
-                    <ArrowUpOutlined className="trend-icon" />
-                  ) : (
-                    <ArrowDownOutlined className="trend-icon" />
-                  )}
-                  {Math.abs(card.growth)}%
-                </div>
-              </div>
-              <div 
-                className="stats-icon" 
-                style={{ color: card.color }}
-              >
-                {card.icon}
-              </div>
-            </div>
-          </Card>
-        ))}
-      </div>
+            {/* 核心指标卡片 */}
+            <Row gutter={[24, 24]} className="mb-6">
+              <Col xs={24} sm={12} lg={6}>
+                <MetricsCard
+                  title="总通话数"
+                  value={dashboardStats.activeCalls + dashboardStats.blockedCalls}
+                  icon={<PhoneOutlined />}
+                  trend={{
+                    value: dashboardStats.todayCallsGrowth,
+                    period: '昨日'
+                  }}
+                  color="#1890ff"
+                  loading={loading}
+                  onClick={() => navigate('/calls')}
+                />
+              </Col>
+              <Col xs={24} sm={12} lg={6}>
+                <MetricsCard
+                  title="AI成功处理"
+                  value={dashboardStats.aiResponses}
+                  icon={<SoundOutlined />}
+                  trend={{
+                    value: dashboardStats.aiResponsesGrowth,
+                    period: '昨日'
+                  }}
+                  progress={{
+                    percent: (dashboardStats.aiResponses / (dashboardStats.activeCalls + dashboardStats.blockedCalls)) * 100,
+                    showInfo: false
+                  }}
+                  color="#52c41a"
+                  loading={loading}
+                  onClick={() => navigate('/ai-config')}
+                />
+              </Col>
+              <Col xs={24} sm={12} lg={6}>
+                <MetricsCard
+                  title="拦截骚扰"
+                  value={dashboardStats.blockedCalls}
+                  icon={<SecurityScanOutlined />}
+                  trend={{
+                    value: dashboardStats.blockedCallsGrowth,
+                    period: '昨日'
+                  }}
+                  color="#fa541c"
+                  loading={loading}
+                  onClick={() => navigate('/calls?status=blocked')}
+                />
+              </Col>
+              <Col xs={24} sm={12} lg={6}>
+                <MetricsCard
+                  title="活跃用户"
+                  value={dashboardStats.totalUsers}
+                  icon={<UserOutlined />}
+                  trend={{
+                    value: dashboardStats.activeUsersGrowth,
+                    period: '昨日'
+                  }}
+                  color="#722ed1"
+                  loading={loading}
+                  onClick={() => navigate('/users')}
+                />
+              </Col>
+            </Row>
 
-      {/* 图表和活动 */}
-      <Row gutter={24}>
-        {/* 通话趋势图 */}
-        <Col xs={24} lg={16}>
-          <Card 
-            title="实时监控" 
-            extra={
-              <Space>
-                <Button size="small" onClick={() => navigate('/monitoring')}>
-                  <EyeOutlined /> 详细监控
-                </Button>
-              </Space>
-            }
-          >
-            <ReactECharts 
-              option={callTrendOption} 
-              style={{ height: 300 }}
-            />
-          </Card>
-        </Col>
+            {/* 性能指标 */}
+            <Row gutter={[24, 24]} className="mb-6">
+              <Col xs={24} sm={12} lg={6}>
+                <MetricsCard
+                  title="平均响应时间"
+                  value={liveMetrics.latency.current}
+                  suffix="ms"
+                  icon={<ClockCircleOutlined />}
+                  status={liveMetrics.latency.current < 800 ? 'success' : 'warning'}
+                  description={`目标: ${liveMetrics.latency.target}ms`}
+                  loading={loading}
+                />
+              </Col>
+              <Col xs={24} sm={12} lg={6}>
+                <MetricsCard
+                  title="系统成功率"
+                  value={dashboardStats.uptime}
+                  suffix="%"
+                  precision={1}
+                  icon={<CheckCircleOutlined />}
+                  status={dashboardStats.uptime > 99 ? 'success' : 'warning'}
+                  progress={{
+                    percent: dashboardStats.uptime,
+                    strokeColor: dashboardStats.uptime > 99 ? '#52c41a' : '#faad14'
+                  }}
+                  loading={loading}
+                />
+              </Col>
+              <Col xs={24} sm={12} lg={6}>
+                <MetricsCard
+                  title="AI效能指数"
+                  value={liveMetrics.quality.userSatisfaction * 100}
+                  suffix="%"
+                  precision={1}
+                  icon={<DashboardOutlined />}
+                  status={liveMetrics.quality.userSatisfaction > 0.85 ? 'success' : 'warning'}
+                  description="用户满意度评分"
+                  loading={loading}
+                />
+              </Col>
+              <Col xs={24} sm={12} lg={6}>
+                <MetricsCard
+                  title="系统健康"
+                  value={systemHealth?.status === 'healthy' ? '正常' : systemHealth?.status === 'warning' ? '警告' : '异常'}
+                  icon={<HeartOutlined />}
+                  status={
+                    systemHealth?.status === 'healthy' ? 'success' :
+                    systemHealth?.status === 'warning' ? 'warning' : 'error'
+                  }
+                  loading={isLoadingHealth}
+                  onClick={() => navigate('/monitoring')}
+                />
+              </Col>
+            </Row>
 
-        {/* 系统状态 */}
-        <Col xs={24} lg={8}>
-          <Card title="系统状态">
-            <Space direction="vertical" style={{ width: '100%' }} size="large">
-              <div>
-                <div style={{ marginBottom: 8 }}>
-                  <Text>CPU使用率</Text>
-                  <Text style={{ float: 'right' }}>45%</Text>
-                </div>
-                <Progress percent={45} strokeColor="#52c41a" />
-              </div>
-              
-              <div>
-                <div style={{ marginBottom: 8 }}>
-                  <Text>内存使用</Text>
-                  <Text style={{ float: 'right' }}>62%</Text>
-                </div>
-                <Progress percent={62} strokeColor="#1890ff" />
-              </div>
-              
-              <div>
-                <div style={{ marginBottom: 8 }}>
-                  <Text>AI响应速度</Text>
-                  <Text style={{ float: 'right' }}>优秀</Text>
-                </div>
-                <Progress percent={85} strokeColor="#722ed1" />
-              </div>
-              
-              <div>
-                <div style={{ marginBottom: 8 }}>
-                  <Text>系统稳定性</Text>
-                  <Text style={{ float: 'right' }}>99.9%</Text>
-                </div>
-                <Progress percent={99.9} strokeColor="#52c41a" />
-              </div>
-            </Space>
-          </Card>
-        </Col>
-      </Row>
+            {/* 图表区域 */}
+            <Row gutter={[24, 24]}>
+              <Col xs={24} lg={16}>
+                <AdvancedChart
+                  type="line"
+                  title="通话趋势分析"
+                  subtitle="最近7天通话数据变化"
+                  data={chartData}
+                  series={[
+                    { key: 'calls', name: '总通话', color: '#1890ff' },
+                    { key: 'blocked', name: '拦截数', color: '#f5222d' },
+                    { key: 'transferred', name: '转接数', color: '#52c41a' }
+                  ]}
+                  xAxisKey="name"
+                  height={350}
+                  loading={loading}
+                  onFullscreen={() => navigate('/analytics')}
+                />
+              </Col>
+              <Col xs={24} lg={8}>
+                <AdvancedChart
+                  type="donut"
+                  title="通话处理分布"
+                  subtitle="AI处理效果统计"
+                  data={[
+                    { name: 'AI处理', value: dashboardStats.aiResponses },
+                    { name: '拦截骚扰', value: dashboardStats.blockedCalls },
+                    { name: '直接转接', value: dashboardStats.activeCalls }
+                  ]}
+                  height={350}
+                  loading={loading}
+                />
+              </Col>
+            </Row>
 
-      <Row gutter={24} style={{ marginTop: 24 }}>
-        {/* 骚扰类型分布 */}
-        <Col xs={24} lg={12}>
-          <Card title="骚扰类型分布">
-            <ReactECharts 
-              option={spamDistributionOption} 
-              style={{ height: 300 }}
-            />
-          </Card>
-        </Col>
-
-        {/* 最近活动 */}
-        <Col xs={24} lg={12}>
-          <Card 
-            title="最近活动" 
-            extra={
-              <Button size="small" onClick={() => navigate('/calls')}>
-                查看全部
-              </Button>
-            }
-          >
-            <List
-              dataSource={recentActivities}
-              renderItem={(item) => (
-                <List.Item style={{ padding: '12px 0' }}>
-                  <List.Item.Meta
-                    avatar={<Badge status={item.status as any} />}
-                    title={
-                      <Text strong style={{ fontSize: 14 }}>
-                        {item.title}
-                      </Text>
-                    }
-                    description={
-                      <div>
-                        <Text type="secondary" style={{ fontSize: 13 }}>
-                          {item.description}
-                        </Text>
-                        <br />
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          {item.time}
-                        </Text>
+            {/* 最近活动 */}
+            <Row gutter={[24, 24]} className="mt-6">
+              <Col xs={24} lg={12}>
+                <Card 
+                  title="系统资源" 
+                  extra={<Button size="small" onClick={() => navigate('/monitoring')}>详细监控</Button>}
+                >
+                  <Space direction="vertical" style={{ width: '100%' }} size="large">
+                    <div>
+                      <div className="flex justify-between mb-2">
+                        <Text>CPU使用率</Text>
+                        <Text>{liveMetrics.resources.cpuUsage}%</Text>
                       </div>
-                    }
+                      <Progress percent={liveMetrics.resources.cpuUsage} strokeColor="#52c41a" />
+                    </div>
+                    
+                    <div>
+                      <div className="flex justify-between mb-2">
+                        <Text>内存使用</Text>
+                        <Text>{liveMetrics.resources.memoryUsage}%</Text>
+                      </div>
+                      <Progress percent={liveMetrics.resources.memoryUsage} strokeColor="#1890ff" />
+                    </div>
+                    
+                    <div>
+                      <div className="flex justify-between mb-2">
+                        <Text>磁盘使用</Text>
+                        <Text>{liveMetrics.resources.diskUsage}%</Text>
+                      </div>
+                      <Progress percent={liveMetrics.resources.diskUsage} strokeColor="#faad14" />
+                    </div>
+                    
+                    <div>
+                      <div className="flex justify-between mb-2">
+                        <Text>网络延迟</Text>
+                        <Text>{liveMetrics.resources.networkLatency}ms</Text>
+                      </div>
+                      <Progress 
+                        percent={(liveMetrics.resources.networkLatency / 100) * 100} 
+                        strokeColor="#722ed1"
+                        format={() => '良好'}
+                      />
+                    </div>
+                  </Space>
+                </Card>
+              </Col>
+
+              <Col xs={24} lg={12}>
+                <Card 
+                  title="最近活动" 
+                  extra={<Button size="small" onClick={() => navigate('/calls')}>查看全部</Button>}
+                >
+                  <List
+                    dataSource={recentActivities}
+                    renderItem={(item) => (
+                      <List.Item className="py-3">
+                        <List.Item.Meta
+                          avatar={<Badge status={item.status as any} />}
+                          title={<Text strong className="text-sm">{item.title}</Text>}
+                          description={
+                            <div>
+                              <Text type="secondary" className="text-xs">
+                                {item.description}
+                              </Text>
+                              <br />
+                              <Text type="secondary" className="text-xs">
+                                {item.time}
+                              </Text>
+                            </div>
+                          }
+                        />
+                      </List.Item>
+                    )}
                   />
-                </List.Item>
-              )}
+                </Card>
+              </Col>
+            </Row>
+          </motion.div>
+        </TabPane>
+
+        {/* 实时监控 */}
+        <TabPane tab="实时监控" key="realtime">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.1 }}
+          >
+            <Alert
+              message="实时监控功能"
+              description="实时通话状态监控、AI处理性能追踪等高级功能正在开发中..."
+              type="info"
+              showIcon
+              className="mb-6"
             />
-          </Card>
-        </Col>
-      </Row>
+            
+            <Row gutter={[24, 24]}>
+              <Col span={24}>
+                <Card title="实时通话流">
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center">
+                      <SyncOutlined className="text-4xl text-blue-500 mb-4" spin />
+                      <p className="text-gray-500">实时数据流可视化开发中...</p>
+                    </div>
+                  </div>
+                </Card>
+              </Col>
+            </Row>
+          </motion.div>
+        </TabPane>
+
+        {/* 系统分析 */}
+        <TabPane tab="系统分析" key="analytics">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+          >
+            <Row gutter={[24, 24]}>
+              <Col xs={24} lg={12}>
+                <AdvancedChart
+                  type="pie"
+                  title="骚扰电话类型分布"
+                  data={[
+                    { name: '推销电话', value: 45 },
+                    { name: '贷款推广', value: 32 },
+                    { name: '投资理财', value: 18 },
+                    { name: '保险销售', value: 12 },
+                    { name: '其他', value: 8 }
+                  ]}
+                  height={350}
+                />
+              </Col>
+              <Col xs={24} lg={12}>
+                <AdvancedChart
+                  type="bar"
+                  title="每日拦截效果"
+                  data={chartData.map(item => ({
+                    name: item.name,
+                    value: item.blocked
+                  }))}
+                  height={350}
+                />
+              </Col>
+            </Row>
+          </motion.div>
+        </TabPane>
+      </Tabs>
     </div>
   )
 }

@@ -1,0 +1,638 @@
+name: Deploy to Production
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy (tag or SHA)'
+        required: true
+      services:
+        description: 'Services to deploy (comma-separated or "all")'
+        required: true
+        default: 'all'
+      deployment_strategy:
+        description: 'Deployment strategy'
+        required: true
+        type: choice
+        options:
+        - rolling
+        - canary
+        - blue-green
+        default: rolling
+      skip_checks:
+        description: 'Skip pre-deployment checks (emergency deployment)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  NODE_VERSION: '20.x'
+
+jobs:
+  # 生产环境准备检查
+  pre-production-checks:
+    name: Pre-production Validation
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip_checks }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version tag format: $TAG"
+            echo "Expected format: v1.2.3"
+            exit 1
+          fi
+
+      - name: Check staging deployment status
+        run: |
+          # 验证staging环境健康状态
+          STAGING_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" https://staging.ai-answer-ninja.com/health)
+          if [ "$STAGING_HEALTH" != "200" ]; then
+            echo "Staging environment is unhealthy (HTTP $STAGING_HEALTH)"
+            echo "Production deployment requires healthy staging environment"
+            exit 1
+          fi
+
+      - name: Verify database migrations
+        run: |
+          # 检查数据库迁移状态
+          echo "Checking database migration compatibility..."
+          npm run db:migration:verify:production
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL_READ_ONLY }}
+
+      - name: Security compliance check
+        run: |
+          # 最终安全合规检查
+          echo "Running production security compliance checks..."
+          npm run security:compliance:check
+        env:
+          SECURITY_SCAN_TOKEN: ${{ secrets.SECURITY_SCAN_TOKEN }}
+
+      - name: Load testing verification
+        run: |
+          # 确保最新的负载测试通过
+          echo "Verifying latest load test results..."
+          if ! npm run test:load:verify:latest; then
+            echo "Latest load tests failed or not found"
+            echo "Production deployment requires passing load tests"
+            exit 1
+          fi
+
+  # 构建生产镜像
+  build-production-images:
+    name: Build Production Images
+    runs-on: ubuntu-latest
+    needs: pre-production-checks
+    if: always() && (needs.pre-production-checks.result == 'success' || inputs.skip_checks)
+    
+    strategy:
+      matrix:
+        service:
+          - phone-gateway
+          - configuration-service
+          - monitoring
+          - smart-whitelist-node
+    
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tags: ${{ steps.meta.outputs.tags }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=production-latest
+
+      - name: Build and push production image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/${{ matrix.service }}
+          file: ./services/${{ matrix.service }}/Dockerfile.production
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ github.ref_name }}
+            ENVIRONMENT=production
+
+      - name: Sign container image
+        uses: sigstore/cosign-installer@v3
+      
+      - name: Sign the published Docker image
+        run: |
+          cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}@${{ steps.build.outputs.digest }}
+
+      - name: Generate and sign SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: ${{ matrix.service }}-production-sbom.spdx.json
+
+      - name: Upload production SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.service }}-production-sbom
+          path: ${{ matrix.service }}-production-sbom.spdx.json
+
+  # 生产环境安全扫描
+  production-security-scan:
+    name: Production Security Scan
+    runs-on: ubuntu-latest
+    needs: build-production-images
+    strategy:
+      matrix:
+        service:
+          - phone-gateway
+          - configuration-service
+          - monitoring
+          - smart-whitelist-node
+
+    steps:
+      - name: Run comprehensive security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:production-latest
+          format: 'sarif'
+          output: 'trivy-production-${{ matrix.service }}.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          exit-code: '1'  # Fail on critical/high vulnerabilities
+
+      - name: Upload security scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-production-${{ matrix.service }}.sarif'
+
+      - name: Advanced security scanning
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:production-latest
+          args: --severity-threshold=medium --fail-on=all
+
+  # 蓝绿部署
+  blue-green-deployment:
+    name: Blue-Green Deployment
+    runs-on: ubuntu-latest
+    needs: [build-production-images, production-security-scan]
+    if: inputs.deployment_strategy == 'blue-green'
+    environment:
+      name: production
+      url: https://api.ai-answer-ninja.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup deployment tools
+        run: |
+          # Setup kubectl, helm, and AWS CLI
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+          
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region us-east-1 --name ai-answer-ninja-production
+
+      - name: Deploy to green environment
+        run: |
+          # 部署到绿色环境
+          helm upgrade --install ai-answer-ninja-green helm/ai-answer-ninja \
+            --namespace production \
+            --values helm/ai-answer-ninja/values-production.yaml \
+            --set deployment.color=green \
+            --set image.tag=production-latest \
+            --set ingress.hosts[0]=green.ai-answer-ninja.com \
+            --wait --timeout=15m
+
+      - name: Run comprehensive tests on green
+        run: |
+          sleep 120  # Allow full startup
+          
+          # 运行完整的生产环境测试套件
+          npm run test:production:comprehensive -- --target=https://green.ai-answer-ninja.com
+        env:
+          PRODUCTION_API_KEY: ${{ secrets.PRODUCTION_API_KEY }}
+
+      - name: Switch traffic to green
+        run: |
+          # 切换流量到绿色环境
+          kubectl patch ingress ai-answer-ninja-ingress -n production \
+            -p '{"spec":{"rules":[{"host":"api.ai-answer-ninja.com","http":{"paths":[{"path":"/","pathType":"Prefix","backend":{"service":{"name":"ai-answer-ninja-green","port":{"number":80}}}}]}}]}}'
+
+      - name: Verify traffic switch
+        run: |
+          sleep 60  # Allow DNS propagation
+          
+          # 验证流量切换成功
+          for i in {1..10}; do
+            if curl -f https://api.ai-answer-ninja.com/health; then
+              echo "Traffic successfully switched to green environment"
+              break
+            fi
+            echo "Attempt $i failed, retrying..."
+            sleep 30
+          done
+
+      - name: Cleanup old blue environment
+        run: |
+          # 删除旧的蓝色环境（如果存在）
+          helm uninstall ai-answer-ninja-blue -n production || echo "No blue environment to cleanup"
+
+  # 金丝雀部署
+  canary-deployment:
+    name: Canary Deployment
+    runs-on: ubuntu-latest
+    needs: [build-production-images, production-security-scan]
+    if: inputs.deployment_strategy == 'canary'
+    environment:
+      name: production
+      url: https://api.ai-answer-ninja.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup deployment tools
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region us-east-1 --name ai-answer-ninja-production
+
+      - name: Deploy canary (10% traffic)
+        run: |
+          # 部署金丝雀版本，分配10%流量
+          helm upgrade --install ai-answer-ninja-canary helm/ai-answer-ninja \
+            --namespace production \
+            --values helm/ai-answer-ninja/values-production.yaml \
+            --set deployment.canary.enabled=true \
+            --set deployment.canary.weight=10 \
+            --set image.tag=production-latest \
+            --wait --timeout=10m
+
+      - name: Monitor canary metrics (5 min)
+        run: |
+          echo "Monitoring canary deployment for 5 minutes..."
+          
+          # 监控关键指标
+          for i in {1..10}; do
+            # 错误率检查
+            ERROR_RATE=$(kubectl exec -n production deployment/ai-answer-ninja-canary -- curl -s http://localhost:9090/metrics | grep -o 'error_rate [0-9.]*' | cut -d' ' -f2)
+            
+            # 延迟检查
+            LATENCY_P95=$(kubectl exec -n production deployment/ai-answer-ninja-canary -- curl -s http://localhost:9090/metrics | grep -o 'latency_p95 [0-9.]*' | cut -d' ' -f2)
+            
+            echo "Iteration $i: Error Rate: ${ERROR_RATE:-N/A}, P95 Latency: ${LATENCY_P95:-N/A}ms"
+            
+            # 如果错误率过高或延迟过高，则回滚
+            if (( $(echo "$ERROR_RATE > 0.05" | bc -l) )) || (( $(echo "$LATENCY_P95 > 2000" | bc -l) )); then
+              echo "Metrics exceeded thresholds, rolling back canary"
+              exit 1
+            fi
+            
+            sleep 30
+          done
+
+      - name: Increase canary traffic to 50%
+        run: |
+          helm upgrade ai-answer-ninja-canary helm/ai-answer-ninja \
+            --namespace production \
+            --values helm/ai-answer-ninja/values-production.yaml \
+            --set deployment.canary.weight=50 \
+            --wait --timeout=5m
+
+      - name: Monitor high traffic canary (10 min)
+        run: |
+          echo "Monitoring 50% traffic for 10 minutes..."
+          
+          for i in {1..20}; do
+            ERROR_RATE=$(kubectl exec -n production deployment/ai-answer-ninja-canary -- curl -s http://localhost:9090/metrics | grep -o 'error_rate [0-9.]*' | cut -d' ' -f2)
+            
+            if (( $(echo "$ERROR_RATE > 0.05" | bc -l) )); then
+              echo "High error rate detected, rolling back"
+              exit 1
+            fi
+            
+            sleep 30
+          done
+
+      - name: Complete canary deployment (100% traffic)
+        run: |
+          # 将所有流量切换到新版本
+          helm upgrade ai-answer-ninja-canary helm/ai-answer-ninja \
+            --namespace production \
+            --values helm/ai-answer-ninja/values-production.yaml \
+            --set deployment.canary.weight=100 \
+            --wait --timeout=5m
+
+      - name: Cleanup old version
+        run: |
+          # 清理旧版本
+          kubectl delete deployment ai-answer-ninja-stable -n production || echo "No stable deployment to cleanup"
+
+  # 滚动部署
+  rolling-deployment:
+    name: Rolling Deployment
+    runs-on: ubuntu-latest
+    needs: [build-production-images, production-security-scan]
+    if: inputs.deployment_strategy == 'rolling' || inputs.deployment_strategy == ''
+    environment:
+      name: production
+      url: https://api.ai-answer-ninja.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup deployment tools
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region us-east-1 --name ai-answer-ninja-production
+
+      - name: Rolling deployment
+        run: |
+          # 执行滚动更新
+          helm upgrade --install ai-answer-ninja helm/ai-answer-ninja \
+            --namespace production \
+            --values helm/ai-answer-ninja/values-production.yaml \
+            --set image.tag=production-latest \
+            --set deployment.strategy.type=RollingUpdate \
+            --set deployment.strategy.rollingUpdate.maxUnavailable=25% \
+            --set deployment.strategy.rollingUpdate.maxSurge=25% \
+            --wait --timeout=15m
+
+      - name: Verify rolling deployment
+        run: |
+          # 检查所有Pod是否健康
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=ai-answer-ninja -n production --timeout=300s
+          
+          # 验证服务可用性
+          kubectl get deployments -n production
+          kubectl get services -n production
+
+  # 部署后验证
+  post-deployment-verification:
+    name: Post-deployment Verification
+    runs-on: ubuntu-latest
+    needs: [blue-green-deployment, canary-deployment, rolling-deployment]
+    if: always() && (needs.blue-green-deployment.result == 'success' || needs.canary-deployment.result == 'success' || needs.rolling-deployment.result == 'success')
+    
+    steps:
+      - name: Comprehensive health checks
+        run: |
+          # 全面的健康检查
+          for service in phone-gateway configuration-service monitoring smart-whitelist-node; do
+            echo "Checking $service health..."
+            if ! curl -f "https://api.ai-answer-ninja.com/health/$service"; then
+              echo "$service health check failed"
+              exit 1
+            fi
+          done
+
+      - name: End-to-end production tests
+        run: |
+          # 端到端生产环境测试
+          npm run test:e2e:production
+        env:
+          PRODUCTION_BASE_URL: https://api.ai-answer-ninja.com
+          PRODUCTION_API_KEY: ${{ secrets.PRODUCTION_API_KEY }}
+
+      - name: Performance validation
+        run: |
+          # 性能基准验证
+          npm run test:performance:production:validate
+        env:
+          PRODUCTION_BASE_URL: https://api.ai-answer-ninja.com
+
+      - name: Update monitoring dashboards
+        run: |
+          # 更新Grafana仪表板以反映新部署
+          curl -X POST "https://grafana.ai-answer-ninja.com/api/annotations" \
+            -H "Authorization: Bearer ${{ secrets.GRAFANA_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "text": "Production deployment completed - ${{ github.ref_name }}",
+              "tags": ["deployment", "production"],
+              "time": '$(date +%s000)'
+            }'
+
+  # 紧急回滚
+  emergency-rollback:
+    name: Emergency Rollback
+    runs-on: ubuntu-latest
+    needs: [post-deployment-verification]
+    if: failure()
+    environment:
+      name: production
+    
+    steps:
+      - name: Setup deployment tools
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region us-east-1 --name ai-answer-ninja-production
+
+      - name: Execute emergency rollback
+        run: |
+          echo "EMERGENCY: Rolling back production deployment"
+          
+          # 回滚到上一个版本
+          helm rollback ai-answer-ninja -n production
+          
+          # 等待回滚完成
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=ai-answer-ninja -n production --timeout=300s
+          
+          # 验证回滚成功
+          curl -f https://api.ai-answer-ninja.com/health
+
+      - name: Emergency notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#emergency-alerts'
+          text: |
+            🚨 EMERGENCY ROLLBACK EXECUTED 🚨
+            
+            **Production deployment failed and was automatically rolled back**
+            **Commit:** ${{ github.sha }}
+            **Time:** $(date)
+            **Action Required:** Immediate investigation
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # 部署通知
+  deployment-notifications:
+    name: Deployment Notifications
+    runs-on: ubuntu-latest
+    needs: [blue-green-deployment, canary-deployment, rolling-deployment, post-deployment-verification]
+    if: always()
+    
+    steps:
+      - name: Production deployment success notification
+        if: success()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          channel: '#production-deployments'
+          text: |
+            🎉 Production deployment successful! 🎉
+            
+            **Version:** ${{ github.ref_name }}
+            **Commit:** ${{ github.sha }}
+            **Strategy:** ${{ inputs.deployment_strategy || 'rolling' }}
+            **Services:** ${{ inputs.services || 'all' }}
+            **Production URL:** https://api.ai-answer-ninja.com
+            **Deployed at:** $(date)
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Production deployment failure notification
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#production-deployments'
+          text: |
+            ❌ Production deployment failed
+            
+            **Version:** ${{ github.ref_name }}
+            **Commit:** ${{ github.sha }}
+            **Strategy:** ${{ inputs.deployment_strategy || 'rolling' }}
+            **Logs:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            **Time:** $(date)
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Update release notes
+        if: success() && startsWith(github.ref, 'refs/tags/')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Release ${tag}`,
+              body: `
+            ## 🚀 Production Deployment Successful
+            
+            **Deployment Details:**
+            - **Version:** ${tag}
+            - **Commit:** ${context.sha}
+            - **Strategy:** ${{ inputs.deployment_strategy || 'rolling' }}
+            - **Deployed:** ${new Date().toISOString()}
+            
+            **Services Updated:**
+            ${{ inputs.services || 'all' }}
+            
+            **Environment:**
+            - Production URL: https://api.ai-answer-ninja.com
+            - Monitoring: https://grafana.ai-answer-ninja.com
+            
+            ## ✅ Post-deployment Verification
+            - Health checks: ✅ Passed
+            - E2E tests: ✅ Passed  
+            - Performance validation: ✅ Passed
+            `,
+              prerelease: false
+            });
+
+      - name: Teams notification
+        if: always()
+        uses: aliencube/microsoft-teams-actions@v0.8.0
+        with:
+          webhook_uri: ${{ secrets.MS_TEAMS_WEBHOOK_URL }}
+          title: ${{ success() && 'Production Deployment Success' || 'Production Deployment Failed' }}
+          text: |
+            **Version:** ${{ github.ref_name }}
+            **Status:** ${{ success() && 'SUCCESS' || 'FAILED' }}
+            **URL:** https://api.ai-answer-ninja.com
+          theme_color: ${{ success() && '00ff00' || 'ff0000' }}

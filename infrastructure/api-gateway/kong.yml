@@ -1,0 +1,673 @@
+_format_version: "3.0"
+_transform: true
+
+# Services Configuration for All 9 Microservices
+services:
+  # Core Services
+  - name: phone-gateway
+    url: http://phone-gateway:3001
+    protocol: http
+    host: phone-gateway
+    port: 3001
+    path: /
+    connect_timeout: 10000
+    write_timeout: 10000
+    read_timeout: 10000
+    retries: 3
+    tags:
+      - core-service
+      - phone
+    
+  - name: realtime-processor
+    url: http://realtime-processor:3002
+    protocol: http
+    host: realtime-processor
+    port: 3002
+    path: /
+    connect_timeout: 5000
+    write_timeout: 5000
+    read_timeout: 5000
+    retries: 5
+    tags:
+      - core-service
+      - realtime
+      - websocket
+    
+  - name: conversation-engine
+    url: http://conversation-engine:3003
+    protocol: http
+    host: conversation-engine
+    port: 3003
+    path: /
+    connect_timeout: 15000
+    write_timeout: 15000
+    read_timeout: 15000
+    retries: 3
+    tags:
+      - core-service
+      - ai
+      - conversation
+    
+  - name: profile-analytics
+    url: http://profile-analytics:3004
+    protocol: http
+    host: profile-analytics
+    port: 3004
+    path: /
+    connect_timeout: 10000
+    write_timeout: 10000
+    read_timeout: 10000
+    retries: 3
+    tags:
+      - core-service
+      - analytics
+      - ml
+
+  # Support Services
+  - name: user-management
+    url: http://user-management:3005
+    protocol: http
+    host: user-management
+    port: 3005
+    path: /
+    connect_timeout: 10000
+    write_timeout: 10000
+    read_timeout: 10000
+    retries: 3
+    tags:
+      - support-service
+      - auth
+      - users
+    
+  - name: smart-whitelist
+    url: http://smart-whitelist:3006
+    protocol: http
+    host: smart-whitelist
+    port: 3006
+    path: /
+    connect_timeout: 8000
+    write_timeout: 8000
+    read_timeout: 8000
+    retries: 3
+    tags:
+      - support-service
+      - whitelist
+      - filtering
+
+  # Platform Services
+  - name: configuration-service
+    url: http://configuration-service:3007
+    protocol: http
+    host: configuration-service
+    port: 3007
+    path: /
+    connect_timeout: 5000
+    write_timeout: 5000
+    read_timeout: 5000
+    retries: 5
+    tags:
+      - platform-service
+      - config
+      - feature-flags
+    
+  - name: storage-service
+    url: http://storage-service:3008
+    protocol: http
+    host: storage-service
+    port: 3008
+    path: /
+    connect_timeout: 30000
+    write_timeout: 30000
+    read_timeout: 30000
+    retries: 2
+    tags:
+      - platform-service
+      - storage
+      - files
+    
+  - name: monitoring-service
+    url: http://monitoring-service:3009
+    protocol: http
+    host: monitoring-service
+    port: 3009
+    path: /
+    connect_timeout: 5000
+    write_timeout: 5000
+    read_timeout: 5000
+    retries: 3
+    tags:
+      - platform-service
+      - monitoring
+      - observability
+
+# Routes Configuration
+routes:
+  # Phone Gateway Routes
+  - name: phone-gateway-webhooks
+    service: phone-gateway
+    paths:
+      - /api/v1/phone/webhook
+      - /api/v1/phone/calls
+    methods:
+      - POST
+      - PUT
+      - DELETE
+    strip_path: false
+    preserve_host: false
+    tags:
+      - phone
+      - webhooks
+      
+  - name: phone-gateway-api
+    service: phone-gateway
+    paths:
+      - /api/v1/phone
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+    strip_path: false
+    preserve_host: false
+    tags:
+      - phone
+      - api
+
+  # Realtime Processor Routes (WebSocket + HTTP)
+  - name: realtime-websocket
+    service: realtime-processor
+    paths:
+      - /api/v1/realtime/ws
+      - /realtime/conversation
+    protocols:
+      - http
+      - https
+      - ws
+      - wss
+    strip_path: false
+    preserve_host: false
+    tags:
+      - realtime
+      - websocket
+      
+  - name: realtime-http
+    service: realtime-processor
+    paths:
+      - /api/v1/realtime/process
+    methods:
+      - POST
+      - PUT
+    strip_path: false
+    preserve_host: false
+    tags:
+      - realtime
+      - http
+
+  # Conversation Engine Routes
+  - name: conversation-management
+    service: conversation-engine
+    paths:
+      - /api/v1/conversation/manage
+      - /api/v1/conversation/personalize
+      - /api/v1/conversation/emotion
+      - /api/v1/conversation/terminate
+    methods:
+      - POST
+      - PUT
+    strip_path: false
+    preserve_host: false
+    tags:
+      - conversation
+      - ai
+      
+  - name: conversation-history
+    service: conversation-engine
+    paths:
+      - /api/v1/conversation/history
+    methods:
+      - GET
+    strip_path: false
+    preserve_host: false
+    tags:
+      - conversation
+      - history
+
+  # Profile Analytics Routes
+  - name: profile-analytics-api
+    service: profile-analytics
+    paths:
+      - /api/v1/analytics/profile
+      - /api/v1/analytics/call
+      - /api/v1/analytics/trends
+      - /api/v1/analytics/learning
+    methods:
+      - GET
+      - POST
+      - PUT
+    strip_path: false
+    preserve_host: false
+    tags:
+      - analytics
+      - ml
+
+  # User Management Routes
+  - name: user-auth
+    service: user-management
+    paths:
+      - /api/v1/auth/login
+      - /api/v1/auth/mfa
+      - /api/v1/auth/refresh
+    methods:
+      - POST
+    strip_path: false
+    preserve_host: false
+    tags:
+      - auth
+      - user
+      
+  - name: user-management-api
+    service: user-management
+    paths:
+      - /api/v1/users
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+    strip_path: false
+    preserve_host: false
+    tags:
+      - users
+      - management
+
+  # Smart Whitelist Routes
+  - name: whitelist-api
+    service: smart-whitelist
+    paths:
+      - /api/v1/whitelist
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+    strip_path: false
+    preserve_host: false
+    tags:
+      - whitelist
+      - filtering
+
+  # Configuration Service Routes
+  - name: config-api
+    service: configuration-service
+    paths:
+      - /api/v1/config
+    methods:
+      - GET
+      - POST
+      - PUT
+    strip_path: false
+    preserve_host: false
+    tags:
+      - config
+      - features
+
+  # Storage Service Routes
+  - name: storage-api
+    service: storage-service
+    paths:
+      - /api/v1/storage/audio
+      - /api/v1/storage/archive
+    methods:
+      - GET
+      - POST
+      - DELETE
+    strip_path: false
+    preserve_host: false
+    tags:
+      - storage
+      - files
+
+  # Monitoring Service Routes
+  - name: monitoring-api
+    service: monitoring-service
+    paths:
+      - /api/v1/monitoring/health
+      - /api/v1/monitoring/metrics
+      - /api/v1/monitoring/alerts
+      - /api/v1/monitoring/traces
+    methods:
+      - GET
+      - POST
+    strip_path: false
+    preserve_host: false
+    tags:
+      - monitoring
+      - observability
+
+# Global Plugins
+plugins:
+  # CORS Plugin
+  - name: cors
+    config:
+      origins:
+        - "http://localhost:3000"
+        - "http://localhost:5173" 
+        - "https://admin.ai-ninja.com"
+        - "https://api.ai-ninja.com"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+        - HEAD
+      headers:
+        - Accept
+        - Authorization
+        - Content-Type
+        - X-Request-ID
+        - X-User-ID
+        - X-Session-ID
+        - User-Agent
+        - Referer
+      exposed_headers:
+        - X-Request-ID
+        - X-Response-Time
+      credentials: true
+      max_age: 3600
+    tags:
+      - security
+      - cors
+
+  # Rate Limiting Plugin
+  - name: rate-limiting
+    config:
+      minute: 1000
+      hour: 10000
+      day: 100000
+      policy: redis
+      redis_host: redis
+      redis_port: 6379
+      redis_database: 1
+      hide_client_headers: false
+      fault_tolerant: true
+    tags:
+      - security
+      - rate-limiting
+
+  # Request ID Plugin
+  - name: request-id
+    config:
+      header_name: X-Request-ID
+      echo_downstream: true
+      generator: uuid
+    tags:
+      - observability
+      - tracing
+
+  # Prometheus Plugin
+  - name: prometheus
+    config:
+      per_consumer: true
+      status_code_metrics: true
+      latency_metrics: true
+      bandwidth_metrics: true
+      upstream_health_metrics: true
+    tags:
+      - monitoring
+      - metrics
+
+  # File Log Plugin
+  - name: file-log
+    config:
+      path: /var/log/kong/access.log
+      reopen: true
+    tags:
+      - logging
+      - audit
+
+# Service-Specific Plugins
+plugins:
+  # JWT Authentication for most services
+  - name: jwt
+    service: user-management
+    config:
+      uri_param_names:
+        - jwt
+      cookie_names:
+        - jwt
+        - authorization
+      header_names:
+        - authorization
+      claims_to_verify:
+        - exp
+        - iss
+      key_claim_name: iss
+      secret_is_base64: false
+      run_on_preflight: true
+      anonymous: null
+    tags:
+      - auth
+      - jwt
+
+  # API Key Authentication for external webhooks
+  - name: key-auth
+    service: phone-gateway
+    route: phone-gateway-webhooks
+    config:
+      key_names:
+        - X-API-Key
+        - apikey
+      key_in_body: false
+      key_in_header: true
+      key_in_query: false
+      hide_credentials: true
+      anonymous: null
+      run_on_preflight: true
+    tags:
+      - auth
+      - api-key
+      - webhooks
+
+  # Response Transformer for API standardization
+  - name: response-transformer
+    config:
+      add:
+        headers:
+          - "X-Powered-By:AI-Answer-Ninja"
+          - "X-Response-Time:{{latency}}"
+          - "X-Service-Version:1.0.0"
+        json_types:
+          - "application/json"
+          - "application/json; charset=utf-8"
+      append:
+        headers:
+          - "Cache-Control:no-store, no-cache, must-revalidate"
+          - "X-Frame-Options:DENY"
+          - "X-Content-Type-Options:nosniff"
+    tags:
+      - security
+      - headers
+
+  # Request Size Limiting
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 50 # 50MB for audio uploads
+      size_unit: megabytes
+      require_content_length: false
+    tags:
+      - security
+      - limits
+
+  # IP Restriction for admin endpoints
+  - name: ip-restriction
+    service: monitoring-service
+    config:
+      allow:
+        - "10.0.0.0/8"
+        - "172.16.0.0/12"
+        - "192.168.0.0/16"
+        - "127.0.0.1"
+      deny: []
+      message: "Access denied from this IP"
+    tags:
+      - security
+      - ip-restriction
+
+  # Circuit Breaker for external dependencies
+  - name: proxy-cache
+    service: configuration-service
+    config:
+      request_method:
+        - GET
+        - HEAD
+      response_code:
+        - 200
+        - 301
+        - 404
+      content_type:
+        - "text/plain"
+        - "application/json"
+      cache_ttl: 300
+      cache_control: false
+      storage_ttl: 3600
+    tags:
+      - performance
+      - caching
+
+# Upstreams Configuration for Load Balancing
+upstreams:
+  - name: phone-gateway-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 1
+        unhealthy:
+          interval: 10
+          http_failures: 3
+          timeouts: 3
+      passive:
+        healthy:
+          successes: 1
+        unhealthy:
+          http_failures: 3
+          timeouts: 3
+    hash_on: none
+    hash_fallback: none
+    tags:
+      - phone-gateway
+      - load-balancer
+
+  - name: realtime-processor-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        healthy:
+          interval: 5
+          successes: 1
+        unhealthy:
+          interval: 5
+          http_failures: 2
+          timeouts: 2
+      passive:
+        healthy:
+          successes: 1
+        unhealthy:
+          http_failures: 2
+          timeouts: 2
+    hash_on: none
+    hash_fallback: none
+    tags:
+      - realtime-processor
+      - load-balancer
+
+  - name: conversation-engine-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        healthy:
+          interval: 15
+          successes: 1
+        unhealthy:
+          interval: 15
+          http_failures: 3
+          timeouts: 3
+      passive:
+        healthy:
+          successes: 1
+        unhealthy:
+          http_failures: 3
+          timeouts: 3
+    hash_on: none
+    hash_fallback: none
+    tags:
+      - conversation-engine
+      - load-balancer
+
+# Targets for Upstreams
+targets:
+  - upstream: phone-gateway-upstream
+    target: phone-gateway:3001
+    weight: 100
+    tags:
+      - phone-gateway
+      
+  - upstream: realtime-processor-upstream
+    target: realtime-processor:3002
+    weight: 100
+    tags:
+      - realtime-processor
+      
+  - upstream: conversation-engine-upstream
+    target: conversation-engine:3003
+    weight: 100
+    tags:
+      - conversation-engine
+
+# Consumer Configuration (for API key management)
+consumers:
+  - username: azure-webhook
+    custom_id: azure-communication-service
+    tags:
+      - external
+      - azure
+      - webhook
+      
+  - username: admin-panel
+    custom_id: frontend-admin
+    tags:
+      - internal
+      - frontend
+      - admin
+
+# Consumer Credentials
+keyauth_credentials:
+  - consumer: azure-webhook
+    key: "azure-webhook-key-${AZURE_WEBHOOK_API_KEY}"
+    tags:
+      - azure
+      - webhook
+      
+  - consumer: admin-panel
+    key: "admin-panel-key-${ADMIN_PANEL_API_KEY}"
+    tags:
+      - admin
+      - frontend
+
+# JWT Secrets
+jwt_secrets:
+  - consumer: admin-panel
+    key: "admin-jwt-issuer"
+    secret: "${JWT_SECRET_KEY}"
+    algorithm: HS256
+    tags:
+      - jwt
+      - admin

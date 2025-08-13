@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "description": "Phone Gateway Service for AI Answer Ninja - Handles incoming calls, routing, and filtering",
   "main": "dist/server.js",
+  "author": "AI Answer Ninja Team",
+  "license": "MIT",
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
@@ -12,7 +14,9 @@
     "test:integration": "jest --config jest.integration.config.js",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
-    "healthcheck": "node dist/utils/healthcheck.js"
+    "healthcheck": "node dist/utils/healthcheck.js",
+    "docker:build": "docker build -t phone-gateway .",
+    "docker:run": "docker run -p 3001:3001 phone-gateway"
   },
   "dependencies": {
     "@types/node": "^20.10.5",
@@ -26,14 +30,20 @@
     "joi": "^17.11.0",
     "rate-limiter-flexible": "^5.0.3",
     "axios": "^1.6.2",
-    "redis": "^4.6.12",
+    "ioredis": "^5.3.2",
     "jsonwebtoken": "^9.0.2",
     "bull": "^4.12.2",
-    "twilio": "^4.19.3",
     "node-cron": "^3.0.3",
     "pg": "^8.11.3",
     "compression": "^1.7.4",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "@azure/communication-call-automation": "^1.2.0",
+    "@azure/communication-common": "^2.3.0",
+    "@azure/eventgrid": "^5.2.0",
+    "@azure/storage-blob": "^12.17.0",
+    "@azure/event-hubs": "^5.11.0",
+    "ws": "^8.14.2",
+    "socket.io": "^4.7.4"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",

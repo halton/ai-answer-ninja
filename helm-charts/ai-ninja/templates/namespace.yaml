@@ -1,0 +1,88 @@
+{{- if .Values.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace.name }}
+  labels:
+    {{- include "ai-ninja.labels" . | nindent 4 }}
+    {{- range $key, $value := .Values.namespace.labels }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+  {{- if .Values.namespace.annotations }}
+  annotations:
+    {{- range $key, $value := .Values.namespace.annotations }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+  {{- end }}
+
+---
+{{- if .Values.resources.quotas.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "ai-ninja.fullname" . }}-quota
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "ai-ninja.labels" . | nindent 4 }}
+spec:
+  hard:
+    {{- if .Values.resources.quotas.requests.cpu }}
+    requests.cpu: {{ .Values.resources.quotas.requests.cpu | quote }}
+    {{- end }}
+    {{- if .Values.resources.quotas.requests.memory }}
+    requests.memory: {{ .Values.resources.quotas.requests.memory | quote }}
+    {{- end }}
+    {{- if .Values.resources.quotas.limits.cpu }}
+    limits.cpu: {{ .Values.resources.quotas.limits.cpu | quote }}
+    {{- end }}
+    {{- if .Values.resources.quotas.limits.memory }}
+    limits.memory: {{ .Values.resources.quotas.limits.memory | quote }}
+    {{- end }}
+    {{- if .Values.resources.quotas.storage }}
+    requests.storage: {{ .Values.resources.quotas.storage | quote }}
+    {{- end }}
+    {{- if .Values.resources.quotas.pods }}
+    pods: {{ .Values.resources.quotas.pods | quote }}
+    {{- end }}
+    {{- if .Values.resources.quotas.services }}
+    services: {{ .Values.resources.quotas.services | quote }}
+    {{- end }}
+{{- end }}
+
+---
+{{- if .Values.resources.limitRanges.enabled }}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ include "ai-ninja.fullname" . }}-limits
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "ai-ninja.labels" . | nindent 4 }}
+spec:
+  limits:
+  - default:
+      {{- if .Values.resources.limitRanges.defaultLimit.cpu }}
+      cpu: {{ .Values.resources.limitRanges.defaultLimit.cpu | quote }}
+      {{- end }}
+      {{- if .Values.resources.limitRanges.defaultLimit.memory }}
+      memory: {{ .Values.resources.limitRanges.defaultLimit.memory | quote }}
+      {{- end }}
+    defaultRequest:
+      {{- if .Values.resources.limitRanges.defaultRequest.cpu }}
+      cpu: {{ .Values.resources.limitRanges.defaultRequest.cpu | quote }}
+      {{- end }}
+      {{- if .Values.resources.limitRanges.defaultRequest.memory }}
+      memory: {{ .Values.resources.limitRanges.defaultRequest.memory | quote }}
+      {{- end }}
+    {{- if or .Values.resources.limitRanges.maxLimit.cpu .Values.resources.limitRanges.maxLimit.memory }}
+    max:
+      {{- if .Values.resources.limitRanges.maxLimit.cpu }}
+      cpu: {{ .Values.resources.limitRanges.maxLimit.cpu | quote }}
+      {{- end }}
+      {{- if .Values.resources.limitRanges.maxLimit.memory }}
+      memory: {{ .Values.resources.limitRanges.maxLimit.memory | quote }}
+      {{- end }}
+    {{- end }}
+    type: Container
+{{- end }}
+{{- end }}

@@ -1,0 +1,410 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      services:
+        description: 'Services to deploy (comma-separated or "all")'
+        required: true
+        default: 'all'
+      force_deploy:
+        description: 'Force deployment even if tests fail'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  NODE_VERSION: '20.x'
+
+jobs:
+  # 构建和推送Docker镜像
+  build-and-push:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - phone-gateway
+          - configuration-service
+          - monitoring
+          - smart-whitelist-node
+    
+    outputs:
+      image-tags: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=staging-latest
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/${{ matrix.service }}
+          file: ./services/${{ matrix.service }}/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:staging-latest
+          format: spdx-json
+          output-file: ${{ matrix.service }}-sbom.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.service }}-sbom
+          path: ${{ matrix.service }}-sbom.spdx.json
+
+  # 安全扫描
+  security-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    strategy:
+      matrix:
+        service:
+          - phone-gateway
+          - configuration-service
+          - monitoring
+          - smart-whitelist-node
+
+    steps:
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:staging-latest
+          format: 'sarif'
+          output: 'trivy-results-${{ matrix.service }}.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results-${{ matrix.service }}.sarif'
+
+      - name: Scan with Snyk
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:staging-latest
+        continue-on-error: true
+
+  # 部署前验证
+  pre-deployment-checks:
+    name: Pre-deployment Validation
+    runs-on: ubuntu-latest
+    needs: [build-and-push, security-scan]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Kubernetes manifests
+        run: |
+          # 安装kubectl和kubeval
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          
+          wget https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
+          tar xf kubeval-linux-amd64.tar.gz
+          sudo mv kubeval /usr/local/bin
+          
+          # 验证Kubernetes清单
+          find k8s/staging -name "*.yaml" -exec kubeval {} \;
+
+      - name: Validate Helm charts
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm lint helm/ai-answer-ninja --values helm/ai-answer-ninja/values-staging.yaml
+
+      - name: Check staging environment health
+        run: |
+          # 检查staging环境健康状态
+          curl -f https://staging-api.ai-answer-ninja.com/health || echo "Staging environment not accessible"
+
+  # 部署到Staging环境
+  deploy-staging:
+    name: Deploy to Staging Environment
+    runs-on: ubuntu-latest
+    needs: pre-deployment-checks
+    environment:
+      name: staging
+      url: https://staging.ai-answer-ninja.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'v3.12.0'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region us-east-1 --name ai-answer-ninja-staging
+
+      - name: Deploy with Helm
+        run: |
+          # 更新Helm依赖
+          helm dependency update helm/ai-answer-ninja
+          
+          # 部署到staging
+          helm upgrade --install ai-answer-ninja-staging helm/ai-answer-ninja \
+            --namespace staging \
+            --create-namespace \
+            --values helm/ai-answer-ninja/values-staging.yaml \
+            --set image.tag=staging-latest \
+            --set image.pullPolicy=Always \
+            --wait --timeout=10m
+
+      - name: Verify deployment
+        run: |
+          # 等待所有Pod就绪
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=ai-answer-ninja-staging -n staging --timeout=300s
+          
+          # 检查部署状态
+          kubectl get deployments -n staging
+          kubectl get services -n staging
+          kubectl get ingress -n staging
+
+      - name: Run smoke tests
+        run: |
+          # 等待服务完全启动
+          sleep 60
+          
+          # 运行冒烟测试
+          npm run test:smoke:staging
+        env:
+          STAGING_BASE_URL: https://staging.ai-answer-ninja.com
+
+      - name: Update deployment status
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+            const description = status === 'success' ? 'Deployment successful' : 'Deployment failed';
+            
+            github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: '${{ github.event.deployment.id }}' || 'staging',
+              state: status,
+              description: description,
+              environment_url: 'https://staging.ai-answer-ninja.com'
+            });
+
+  # 部署后测试
+  post-deployment-tests:
+    name: Post-deployment Testing
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run health checks
+        run: |
+          # 完整的健康检查
+          npm run health:check:comprehensive -- --env=staging
+        env:
+          STAGING_BASE_URL: https://staging.ai-answer-ninja.com
+
+      - name: Run API integration tests
+        run: |
+          npm run test:api:staging
+        env:
+          STAGING_BASE_URL: https://staging.ai-answer-ninja.com
+          STAGING_API_KEY: ${{ secrets.STAGING_API_KEY }}
+
+      - name: Run performance baseline tests
+        run: |
+          npm run test:performance:baseline -- --env=staging
+        env:
+          STAGING_BASE_URL: https://staging.ai-answer-ninja.com
+
+      - name: Check security headers
+        run: |
+          # 使用securityheaders.com API检查安全头
+          curl -H "Content-Type: application/json" \
+               -d '{"url": "https://staging.ai-answer-ninja.com"}' \
+               https://securityheaders.com/api/analyse
+
+  # 回滚机制
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, post-deployment-tests]
+    if: failure() && !inputs.force_deploy
+    environment:
+      name: staging
+    
+    steps:
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'v3.12.0'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region us-east-1 --name ai-answer-ninja-staging
+
+      - name: Rollback to previous version
+        run: |
+          echo "Rolling back deployment..."
+          helm rollback ai-answer-ninja-staging -n staging
+          
+          # 等待回滚完成
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=ai-answer-ninja-staging -n staging --timeout=300s
+
+      - name: Verify rollback
+        run: |
+          kubectl get deployments -n staging
+          curl -f https://staging.ai-answer-ninja.com/health
+
+  # 通知
+  notify:
+    name: Deployment Notifications
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, post-deployment-tests]
+    if: always()
+    
+    steps:
+      - name: Notify Slack on success
+        if: success()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          channel: '#deployments'
+          text: |
+            :rocket: Staging deployment successful!
+            
+            **Commit:** ${{ github.sha }}
+            **Branch:** ${{ github.ref_name }}
+            **Environment:** https://staging.ai-answer-ninja.com
+            **Deploy time:** ${{ github.event.head_commit.timestamp }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#deployments'
+          text: |
+            :x: Staging deployment failed!
+            
+            **Commit:** ${{ github.sha }}
+            **Branch:** ${{ github.ref_name }}
+            **Logs:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Create GitHub deployment status
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const status = '${{ needs.deploy-staging.result }}' === 'success' && '${{ needs.post-deployment-tests.result }}' === 'success' ? 'success' : 'failure';
+            const description = status === 'success' ? 'Staging deployment completed successfully' : 'Staging deployment failed';
+            
+            await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: 'staging',
+              description: 'Automated staging deployment',
+              auto_merge: false
+            }).then(deployment => {
+              return github.rest.repos.createDeploymentStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: deployment.data.id,
+                state: status,
+                description: description,
+                environment_url: 'https://staging.ai-answer-ninja.com'
+              });
+            });

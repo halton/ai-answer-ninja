@@ -100,9 +100,13 @@ export interface AzureCommunicationEvent {
 
 export interface CallControlOptions {
   recordCall?: boolean;
+  recordingStorageUrl?: string;
   enableTranscription?: boolean;
+  transcriptionLocale?: string;
+  enableMediaStreaming?: boolean;
   customHeaders?: { [key: string]: string };
   timeout?: number;
+  metadata?: any;
 }
 
 export interface QueuedCallJob {
@@ -114,4 +118,61 @@ export interface QueuedCallJob {
   attempts: number;
   delay?: number;
   createdAt: Date;
+}
+
+export interface CallState {
+  callId: string;
+  status: 'connecting' | 'connected' | 'disconnected' | 'failed' | 'on-hold';
+  startTime: Date;
+  endTime?: Date;
+  connectionId?: string;
+  participants: any[];
+  isRecording: boolean;
+  recordingId?: string;
+  metadata: any;
+}
+
+export interface CallMetrics {
+  callId: string;
+  startTime: number;
+  endTime?: number;
+  audioPacketsReceived: number;
+  audioPacketsSent: number;
+  audioQuality: number; // 0-1 scale
+  latency: number; // ms
+  jitter: number; // ms
+  packetLoss: number; // percentage
+}
+
+export interface RecordingInfo {
+  recordingId: string;
+  status: 'active' | 'stopped' | 'completed' | 'failed';
+  startTime: Date;
+  endTime?: Date;
+  storageUrl: string;
+  recordingUrl?: string;
+  duration?: number;
+  fileSize?: number;
+}
+
+export interface TranscriptionSegment {
+  text: string;
+  speaker: string;
+  timestamp: number;
+  confidence: number;
+  language?: string;
+}
+
+export interface MediaStreamingEvent {
+  eventType: 'audio' | 'transcription' | 'metadata';
+  timestamp: number;
+  data: any;
+  sequenceNumber: number;
+}
+
+export interface WebhookValidation {
+  isValid: boolean;
+  signature?: string;
+  timestamp?: number;
+  reason?: string;
 }

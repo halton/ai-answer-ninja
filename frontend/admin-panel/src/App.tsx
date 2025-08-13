@@ -1,8 +1,14 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, Suspense } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { App as AntApp } from 'antd'
+import { App as AntApp, ConfigProvider, Spin } from 'antd'
 import { useAuthStore, useUIStore } from '@/store'
 import { useWebSocket } from '@/services/websocket'
+import { useTheme } from '@/hooks/ui/useTheme'
+import { initPWA } from '@/utils/pwa'
+import ErrorBoundary, { setupGlobalErrorHandling } from '@/components/common/ErrorBoundary'
+import { usePerformanceMonitor } from '@/hooks/usePerformanceMonitor'
+import zhCN from 'antd/locale/zh_CN'
+import '@/styles/themes.scss'
 
 // 布局组件
 import AdminLayout from '@/components/layout/AdminLayout'
@@ -28,7 +34,36 @@ function App() {
   const { isAuthenticated, user } = useAuthStore()
   const { globalLoading, setCurrentPage, setBreadcrumbs } = useUIStore()
   const { connect, disconnect } = useWebSocket()
+  const { antdTheme } = useTheme()
   const location = useLocation()
+
+  // 性能监控
+  const { getMetrics } = usePerformanceMonitor({
+    componentName: 'App',
+    enabled: true,
+    threshold: 100,
+    trackMemory: true,
+    trackFPS: true
+  })
+
+  // 初始化应用
+  useEffect(() => {
+    // 设置全局错误处理
+    setupGlobalErrorHandling()
+    
+    // 初始化 PWA 功能
+    initPWA()
+
+    console.log('🚀 AI Answer Ninja Admin Panel 已启动')
+
+    // 性能监控报告 (开发环境)
+    if (process.env.NODE_ENV === 'development') {
+      setTimeout(() => {
+        const metrics = getMetrics()
+        console.log('📊 应用性能指标:', metrics)
+      }, 3000)
+    }
+  }, [getMetrics])
 
   // WebSocket连接管理
   useEffect(() => {
@@ -57,61 +92,85 @@ function App() {
   }, [location.pathname, setCurrentPage, setBreadcrumbs])
 
   return (
-    <AntApp>
-      {globalLoading && <GlobalLoading />}
-      
-      <Routes>
-        {/* 认证相关路由 */}
-        <Route path="/auth/*" element={
-          <AuthLayout>
+    <ErrorBoundary level="page">
+      <ConfigProvider theme={antdTheme} locale={zhCN}>
+        <AntApp>
+          {globalLoading && <GlobalLoading />}
+          
+          <Suspense
+            fallback={
+              <div className="min-h-screen flex items-center justify-center">
+                <Spin size="large" tip="正在加载应用..." />
+              </div>
+            }
+          >
             <Routes>
-              <Route path="login" element={<Login />} />
-              <Route path="*" element={<Navigate to="/auth/login" replace />} />
+              {/* 认证相关路由 */}
+              <Route path="/auth/*" element={
+                <ErrorBoundary level="section">
+                  <AuthLayout>
+                    <Routes>
+                      <Route path="login" element={<Login />} />
+                      <Route path="*" element={<Navigate to="/auth/login" replace />} />
+                    </Routes>
+                  </AuthLayout>
+                </ErrorBoundary>
+              } />
+
+              {/* 管理后台路由 */}
+              <Route path="/*" element={
+                <ProtectedRoute>
+                  <ErrorBoundary level="section">
+                    <AdminLayout>
+                      <Suspense
+                        fallback={
+                          <div className="p-6 flex items-center justify-center">
+                            <Spin size="large" tip="正在加载页面..." />
+                          </div>
+                        }
+                      >
+                        <Routes>
+                          <Route path="/" element={<Dashboard />} />
+                          <Route path="/dashboard" element={<Dashboard />} />
+                          
+                          {/* 用户管理 */}
+                          <Route path="/users/*" element={<UserManagement />} />
+                          
+                          {/* 通话记录 */}
+                          <Route path="/calls/*" element={<CallHistory />} />
+                          
+                          {/* 白名单管理 */}
+                          <Route path="/whitelist/*" element={<WhitelistManagement />} />
+                          
+                          {/* 系统监控 */}
+                          <Route path="/monitoring/*" element={<SystemMonitoring />} />
+                          
+                          {/* AI配置 */}
+                          <Route path="/ai-config/*" element={<AIConfiguration />} />
+                          
+                          {/* 统计分析 */}
+                          <Route path="/analytics/*" element={<Analytics />} />
+                          
+                          {/* 默认重定向 */}
+                          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                        </Routes>
+                      </Suspense>
+                    </AdminLayout>
+                  </ErrorBoundary>
+                </ProtectedRoute>
+              } />
+
+              {/* 根路径重定向 */}
+              <Route path="/" element={
+                isAuthenticated 
+                  ? <Navigate to="/dashboard" replace />
+                  : <Navigate to="/auth/login" replace />
+              } />
             </Routes>
-          </AuthLayout>
-        } />
-
-        {/* 管理后台路由 */}
-        <Route path="/*" element={
-          <ProtectedRoute>
-            <AdminLayout>
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/dashboard" element={<Dashboard />} />
-                
-                {/* 用户管理 */}
-                <Route path="/users/*" element={<UserManagement />} />
-                
-                {/* 通话记录 */}
-                <Route path="/calls/*" element={<CallHistory />} />
-                
-                {/* 白名单管理 */}
-                <Route path="/whitelist/*" element={<WhitelistManagement />} />
-                
-                {/* 系统监控 */}
-                <Route path="/monitoring/*" element={<SystemMonitoring />} />
-                
-                {/* AI配置 */}
-                <Route path="/ai-config/*" element={<AIConfiguration />} />
-                
-                {/* 统计分析 */}
-                <Route path="/analytics/*" element={<Analytics />} />
-                
-                {/* 默认重定向 */}
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
-              </Routes>
-            </AdminLayout>
-          </ProtectedRoute>
-        } />
-
-        {/* 根路径重定向 */}
-        <Route path="/" element={
-          isAuthenticated 
-            ? <Navigate to="/dashboard" replace />
-            : <Navigate to="/auth/login" replace />
-        } />
-      </Routes>
-    </AntApp>
+          </Suspense>
+        </AntApp>
+      </ConfigProvider>
+    </ErrorBoundary>
   )
 }
 

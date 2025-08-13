@@ -1,0 +1,262 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: conversation-engine
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+    version: v1
+    app.kubernetes.io/name: conversation-engine
+    app.kubernetes.io/component: ai-engine
+    app.kubernetes.io/part-of: ai-ninja
+spec:
+  replicas: 4
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: conversation-engine
+  template:
+    metadata:
+      labels:
+        app: conversation-engine
+        tier: core
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3003"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: conversation-engine-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      initContainers:
+      - name: wait-for-dependencies
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          until nc -z redis-service 6379; do echo "Waiting for Redis..."; sleep 2; done;
+          until nc -z postgres-service 5432; do echo "Waiting for PostgreSQL..."; sleep 2; done;
+      containers:
+      - name: conversation-engine
+        image: ai-ninja/conversation-engine:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3003
+          protocol: TCP
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: PYTHONDONTWRITEBYTECODE
+          value: "1"
+        - name: PYTHONPATH
+          value: "/app"
+        - name: PORT
+          value: "3003"
+        - name: WORKERS
+          value: "2"
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: redis-url
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: postgres-url
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: azure-secrets
+              key: openai-endpoint
+        - name: AZURE_OPENAI_KEY
+          valueFrom:
+            secretKeyRef:
+              name: azure-secrets
+              key: openai-key
+        - name: AZURE_OPENAI_VERSION
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: AZURE_OPENAI_VERSION
+        envFrom:
+        - configMapRef:
+            name: app-config
+        - configMapRef:
+            name: ai-config
+        resources:
+          requests:
+            cpu: 300m
+            memory: 1Gi
+          limits:
+            cpu: 1500m
+            memory: 3Gi
+        livenessProbe:
+          httpGet:
+            path: /health/
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /ready/
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /health/
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 12
+          successThreshold: 1
+        volumeMounts:
+        - name: model-cache
+          mountPath: /app/models
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: conversation-engine-models-pvc
+      - name: logs
+        emptyDir:
+          sizeLimit: 1Gi
+      nodeSelector:
+        node-type: memory-optimized
+      tolerations:
+      - key: "node-type"
+        operator: "Equal"
+        value: "memory-optimized"
+        effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - conversation-engine
+              topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: node-type
+                operator: In
+                values:
+                - memory-optimized
+          - weight: 50
+            preference:
+              matchExpressions:
+              - key: instance-type
+                operator: In
+                values:
+                - r5.large
+                - r5.xlarge
+      terminationGracePeriodSeconds: 45
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: conversation-engine-service
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+spec:
+  type: ClusterIP
+  selector:
+    app: conversation-engine
+  ports:
+  - name: http
+    port: 3003
+    targetPort: 3003
+    protocol: TCP
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: conversation-engine-sa
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+    tier: core
+
+---
+# Persistent Volume Claim for ML models
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: conversation-engine-models-pvc
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: aws-efs
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# ConfigMap for AI/ML configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-config
+  namespace: ai-ninja
+  labels:
+    app: conversation-engine
+data:
+  # AI Model Configuration
+  AI_MODEL_NAME: "gpt-4"
+  AI_TEMPERATURE: "0.7"
+  AI_MAX_TOKENS: "150"
+  AI_TIMEOUT: "10000"
+  
+  # Intent Recognition
+  INTENT_CONFIDENCE_THRESHOLD: "0.7"
+  MAX_CONVERSATION_TURNS: "10"
+  
+  # Response Generation
+  RESPONSE_CACHE_TTL: "3600"
+  ENABLE_RESPONSE_STREAMING: "true"
+  
+  # Learning System
+  ENABLE_LEARNING: "true"
+  LEARNING_BATCH_SIZE: "100"
+  LEARNING_UPDATE_INTERVAL: "3600"
+  
+  # Performance Settings
+  ENABLE_CACHING: "true"
+  CACHE_TTL: "1800"
+  MAX_CONCURRENT_REQUESTS: "50"

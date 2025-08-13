@@ -1,0 +1,654 @@
+# =============================================================================
+# AI Answer Ninja Helm Chart Values
+# Production-ready configuration with comprehensive settings for all environments
+# =============================================================================
+
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  # Global security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001
+    seccompProfile:
+      type: RuntimeDefault
+  
+  # Global resource limits
+  defaultResources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  
+# Namespace configuration
+namespace:
+  create: true
+  name: ai-ninja
+  labels:
+    environment: production
+    app.kubernetes.io/name: ai-ninja
+  annotations:
+    istio-injection: enabled
+
+# Image configuration
+image:
+  registry: ai-ninja
+  tag: latest
+  pullPolicy: Always
+  pullSecrets: []
+
+# Core Services Configuration
+coreServices:
+  phoneGateway:
+    enabled: true
+    name: phone-gateway
+    replicaCount: 3
+    image:
+      repository: phone-gateway
+      tag: latest
+    service:
+      type: LoadBalancer
+      port: 80
+      targetPort: 3001
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+    env:
+      NODE_ENV: production
+      PORT: "3001"
+    autoscaling:
+      enabled: true
+      minReplicas: 3
+      maxReplicas: 20
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 80
+    healthCheck:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    nodeSelector:
+      node-type: compute
+    tolerations:
+      - key: "node-type"
+        operator: "Equal"
+        value: "compute"
+        effect: "NoSchedule"
+
+  realtimeProcessor:
+    enabled: true
+    name: realtime-processor
+    replicaCount: 5
+    image:
+      repository: realtime-processor
+      tag: latest
+    service:
+      type: ClusterIP
+      ports:
+        http: 3002
+        websocket: 8080
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+        ephemeral-storage: 2Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+        ephemeral-storage: 4Gi
+    env:
+      NODE_ENV: production
+      PORT: "3002"
+      WS_PORT: "8080"
+    autoscaling:
+      enabled: true
+      minReplicas: 5
+      maxReplicas: 50
+      targetCPUUtilizationPercentage: 60
+      targetMemoryUtilizationPercentage: 75
+    healthCheck:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 60
+      periodSeconds: 10
+      timeoutSeconds: 10
+    nodeSelector:
+      node-type: compute-optimized
+    volumes:
+      audioProcessing:
+        enabled: true
+        medium: Memory
+        sizeLimit: 1Gi
+      audioCache:
+        enabled: true
+        sizeLimit: 4Gi
+
+  conversationEngine:
+    enabled: true
+    name: conversation-engine
+    replicaCount: 4
+    image:
+      repository: conversation-engine
+      tag: latest
+    service:
+      type: ClusterIP
+      port: 3003
+    resources:
+      requests:
+        cpu: 300m
+        memory: 1Gi
+      limits:
+        cpu: 1500m
+        memory: 3Gi
+    env:
+      PORT: "3003"
+      WORKERS: "2"
+    autoscaling:
+      enabled: true
+      minReplicas: 4
+      maxReplicas: 30
+      targetCPUUtilizationPercentage: 65
+      targetMemoryUtilizationPercentage: 80
+    healthCheck:
+      enabled: true
+      path: /health/
+      initialDelaySeconds: 60
+      periodSeconds: 15
+      timeoutSeconds: 10
+    nodeSelector:
+      node-type: memory-optimized
+    persistence:
+      enabled: true
+      storageClass: aws-efs
+      accessMode: ReadWriteMany
+      size: 5Gi
+      mountPath: /app/models
+
+  profileAnalytics:
+    enabled: true
+    name: profile-analytics
+    replicaCount: 2
+    image:
+      repository: profile-analytics
+      tag: latest
+    service:
+      type: ClusterIP
+      port: 3004
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 15
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 85
+    healthCheck:
+      enabled: true
+      path: /health/
+      initialDelaySeconds: 30
+      periodSeconds: 10
+
+# Support Services Configuration
+supportServices:
+  userManagement:
+    enabled: true
+    name: user-management
+    replicaCount: 2
+    image:
+      repository: user-management
+      tag: latest
+    service:
+      type: ClusterIP
+      port: 3005
+    resources:
+      requests:
+        cpu: 150m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    env:
+      NODE_ENV: production
+      PORT: "3005"
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 10
+      targetCPUUtilizationPercentage: 75
+    healthCheck:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 30
+
+  smartWhitelist:
+    enabled: true
+    name: smart-whitelist
+    replicaCount: 2
+    image:
+      repository: smart-whitelist
+      tag: latest
+    service:
+      type: ClusterIP
+      port: 3006
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    env:
+      PORT: "3006"
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 12
+      targetCPUUtilizationPercentage: 70
+    healthCheck:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 20
+
+# Platform Services Configuration
+platformServices:
+  configurationService:
+    enabled: true
+    name: configuration-service
+    replicaCount: 2
+    image:
+      repository: configuration-service
+      tag: latest
+    service:
+      type: ClusterIP
+      port: 3007
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 300m
+        memory: 512Mi
+    env:
+      NODE_ENV: production
+      PORT: "3007"
+    healthCheck:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 20
+
+  storageService:
+    enabled: true
+    name: storage-service
+    replicaCount: 2
+    image:
+      repository: storage-service
+      tag: latest
+    service:
+      type: ClusterIP
+      port: 3008
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+    env:
+      NODE_ENV: production
+      PORT: "3008"
+    healthCheck:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 20
+    persistence:
+      enabled: true
+      storageClass: aws-gp3
+      accessMode: ReadWriteOnce
+      size: 50Gi
+      mountPath: /app/storage
+
+  monitoringService:
+    enabled: true
+    name: monitoring-service
+    replicaCount: 1
+    image:
+      repository: monitoring-service
+      tag: latest
+    service:
+      type: ClusterIP
+      port: 3009
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    env:
+      NODE_ENV: production
+      PORT: "3009"
+    healthCheck:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 30
+
+# Data Layer Configuration
+dataLayer:
+  postgresql:
+    enabled: true
+    auth:
+      postgresPassword: ""  # Set in secrets
+      username: ai_ninja_user
+      password: ""  # Set in secrets
+      database: ai_ninja_main
+    primary:
+      persistence:
+        enabled: true
+        storageClass: aws-gp3
+        size: 100Gi
+      resources:
+        requests:
+          cpu: 500m
+          memory: 2Gi
+        limits:
+          cpu: 2000m
+          memory: 8Gi
+      nodeSelector:
+        node-type: storage-optimized
+    metrics:
+      enabled: true
+      image:
+        registry: docker.io
+        repository: bitnami/postgres-exporter
+        tag: 0.12.0
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+
+  redis:
+    enabled: true
+    auth:
+      enabled: true
+      password: ""  # Set in secrets
+    master:
+      persistence:
+        enabled: true
+        storageClass: aws-gp3
+        size: 20Gi
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+      nodeSelector:
+        node-type: memory-optimized
+    metrics:
+      enabled: true
+      image:
+        registry: docker.io
+        repository: bitnami/redis-exporter
+        tag: 1.45.0
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+
+# Security Configuration
+security:
+  secrets:
+    create: true
+    external: false
+    externalSecretStore: ""
+    
+  serviceAccount:
+    create: true
+    annotations: {}
+    
+  rbac:
+    create: true
+    
+  networkPolicies:
+    enabled: true
+    
+  podSecurityPolicy:
+    enabled: false
+    
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001
+
+# Networking Configuration
+networking:
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    hosts:
+      - host: api.ai-ninja.com
+        paths:
+          - path: /
+            pathType: Prefix
+            service: phone-gateway-service
+            port: 80
+      - host: ws.ai-ninja.com
+        paths:
+          - path: /ws
+            pathType: Prefix
+            service: realtime-processor-service
+            port: 8080
+    tls:
+      - secretName: tls-secrets
+        hosts:
+          - api.ai-ninja.com
+          - ws.ai-ninja.com
+
+  istio:
+    enabled: true
+    gateway:
+      enabled: true
+      hosts:
+        - api.ai-ninja.com
+        - ws.ai-ninja.com
+    virtualService:
+      enabled: true
+    destinationRule:
+      enabled: true
+    peerAuthentication:
+      enabled: true
+      mtls: STRICT
+    authorizationPolicy:
+      enabled: true
+
+# Monitoring Configuration
+monitoring:
+  prometheus:
+    enabled: true
+    server:
+      persistence:
+        enabled: true
+        storageClass: aws-gp3
+        size: 50Gi
+      resources:
+        requests:
+          cpu: 500m
+          memory: 2Gi
+        limits:
+          cpu: 2000m
+          memory: 8Gi
+      retention: "15d"
+      
+  grafana:
+    enabled: true
+    persistence:
+      enabled: true
+      storageClass: aws-gp3
+      size: 10Gi
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+    adminUser: admin
+    adminPassword: ""  # Set in secrets
+    
+  alertmanager:
+    enabled: true
+    persistence:
+      enabled: true
+      storageClass: aws-gp3
+      size: 5Gi
+      
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    scrapeTimeout: 10s
+
+# Resource Quotas and Limits
+resources:
+  quotas:
+    enabled: true
+    requests:
+      cpu: "10"
+      memory: "20Gi"
+    limits:
+      cpu: "20"
+      memory: "40Gi"
+    storage: "100Gi"
+    pods: "50"
+    services: "20"
+    
+  limitRanges:
+    enabled: true
+    defaultRequest:
+      cpu: 100m
+      memory: 256Mi
+    defaultLimit:
+      cpu: 500m
+      memory: 1Gi
+    maxLimit:
+      cpu: 2000m
+      memory: 4Gi
+
+# Node Selection and Tolerations
+nodeSelector:
+  general: {}
+  compute: 
+    node-type: compute
+  computeOptimized:
+    node-type: compute-optimized
+  memoryOptimized:
+    node-type: memory-optimized
+  storageOptimized:
+    node-type: storage-optimized
+
+tolerations:
+  compute:
+    - key: "node-type"
+      operator: "Equal"
+      value: "compute"
+      effect: "NoSchedule"
+  computeOptimized:
+    - key: "node-type"
+      operator: "Equal"
+      value: "compute-optimized"
+      effect: "NoSchedule"
+
+# Configuration
+config:
+  # Application configuration
+  app:
+    logLevel: info
+    logFormat: json
+    metricsEnabled: true
+    
+  # Feature flags
+  features:
+    aiConversation: true
+    voiceCloning: true
+    analytics: true
+    smartWhitelist: true
+    
+  # Azure services
+  azure:
+    region: eastus2
+    speechRegion: eastus2
+    openaiVersion: "2023-12-01-preview"
+    
+  # Performance tuning
+  performance:
+    cacheEnabled: true
+    cacheTTL: 3600
+    rateLimitEnabled: true
+    rateLimitWindow: 60000
+    rateLimitMaxRequests: 100
+
+# Environment specific overrides
+env:
+  development:
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    autoscaling:
+      enabled: false
+      
+  staging:
+    replicaCount: 2
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 10
+      
+  production:
+    replicaCount: 3
+    autoscaling:
+      enabled: true

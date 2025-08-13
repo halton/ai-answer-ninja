@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Answer Ninja - Realtime Client</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .status-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .status-card {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 15px;
+        }
+        .status-card h3 {
+            margin: 0 0 10px 0;
+            color: #495057;
+            font-size: 14px;
+            text-transform: uppercase;
+        }
+        .status-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #28a745;
+        }
+        .status-value.error {
+            color: #dc3545;
+        }
+        .status-value.warning {
+            color: #ffc107;
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        .form-group {
+            flex: 1;
+            min-width: 200px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #333;
+        }
+        input, select, button {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        button.danger {
+            background: #dc3545;
+        }
+        button.danger:hover {
+            background: #c82333;
+        }
+        button.success {
+            background: #28a745;
+        }
+        button.success:hover {
+            background: #218838;
+        }
+        .audio-controls {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+            align-items: center;
+        }
+        .logs {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 15px;
+            background: #f8f9fa;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+        }
+        .log-timestamp {
+            color: #6c757d;
+            margin-right: 10px;
+        }
+        .log-level {
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .log-level.info {
+            color: #17a2b8;
+        }
+        .log-level.error {
+            color: #dc3545;
+        }
+        .log-level.warn {
+            color: #ffc107;
+        }
+        .log-level.success {
+            color: #28a745;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .metric {
+            text-align: center;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 4px;
+        }
+        .metric-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #495057;
+        }
+        .metric-label {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        .conversation-panel {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 20px;
+            margin: 20px 0;
+            background: #fff;
+        }
+        .conversation-entry {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .conversation-entry.user {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+        }
+        .conversation-entry.ai {
+            background: #f3e5f5;
+            border-left: 4px solid #9c27b0;
+        }
+        .conversation-timestamp {
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        .conversation-text {
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        .audio-visualizer {
+            width: 100%;
+            height: 60px;
+            background: #000;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 AI Answer Ninja - Realtime Communication Client</h1>
+        
+        <!-- Status Panel -->
+        <div class="status-panel">
+            <div class="status-card">
+                <h3>Connection Status</h3>
+                <div id="connectionStatus" class="status-value error">Disconnected</div>
+            </div>
+            <div class="status-card">
+                <h3>Session Status</h3>
+                <div id="sessionStatus" class="status-value">No Session</div>
+            </div>
+            <div class="status-card">
+                <h3>Audio Status</h3>
+                <div id="audioStatus" class="status-value">Inactive</div>
+            </div>
+            <div class="status-card">
+                <h3>Processing Latency</h3>
+                <div id="processingLatency" class="status-value">- ms</div>
+            </div>
+        </div>
+
+        <!-- Connection Controls -->
+        <div class="controls">
+            <div class="form-group">
+                <label for="serverUrl">Server URL:</label>
+                <input type="text" id="serverUrl" value="ws://localhost:3002/realtime/ws">
+            </div>
+            <div class="form-group">
+                <label for="userId">User ID:</label>
+                <input type="text" id="userId" value="test-user-123">
+            </div>
+            <div class="form-group">
+                <label for="callId">Call ID:</label>
+                <input type="text" id="callId" value="test-call-456">
+            </div>
+            <div class="form-group">
+                <label for="authToken">Auth Token (Optional):</label>
+                <input type="text" id="authToken" placeholder="JWT token for authentication">
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="controls">
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+            <button id="startSessionBtn" onclick="startSession()" disabled>Start Session</button>
+            <button id="endSessionBtn" onclick="endSession()" disabled class="danger">End Session</button>
+            <button onclick="clearLogs()">Clear Logs</button>
+        </div>
+
+        <!-- Audio Controls -->
+        <div class="audio-controls">
+            <button id="startAudioBtn" onclick="startAudio()" disabled class="success">Start Audio</button>
+            <button id="stopAudioBtn" onclick="stopAudio()" disabled class="danger">Stop Audio</button>
+            <select id="audioDevice">
+                <option value="">Select Audio Device</option>
+            </select>
+            <label>
+                <input type="checkbox" id="enableVAD" checked> Voice Activity Detection
+            </label>
+            <label>
+                <input type="checkbox" id="enableProcessing" checked> Audio Processing
+            </label>
+        </div>
+
+        <!-- Audio Visualizer -->
+        <canvas id="audioVisualizer" class="audio-visualizer"></canvas>
+
+        <!-- Conversation Panel -->
+        <div class="conversation-panel">
+            <h3>💬 Conversation</h3>
+            <div id="conversation"></div>
+        </div>
+
+        <!-- Performance Metrics -->
+        <div class="metrics">
+            <div class="metric">
+                <div id="messagesReceived" class="metric-value">0</div>
+                <div class="metric-label">Messages Received</div>
+            </div>
+            <div class="metric">
+                <div id="messagesSent" class="metric-value">0</div>
+                <div class="metric-label">Messages Sent</div>
+            </div>
+            <div class="metric">
+                <div id="audioChunks" class="metric-value">0</div>
+                <div class="metric-label">Audio Chunks</div>
+            </div>
+            <div class="metric">
+                <div id="reconnections" class="metric-value">0</div>
+                <div class="metric-label">Reconnections</div>
+            </div>
+            <div class="metric">
+                <div id="averageLatency" class="metric-value">0ms</div>
+                <div class="metric-label">Average Latency</div>
+            </div>
+            <div class="metric">
+                <div id="uptime" class="metric-value">0s</div>
+                <div class="metric-label">Session Uptime</div>
+            </div>
+        </div>
+
+        <!-- Logs -->
+        <h3>📝 System Logs</h3>
+        <div id="logs" class="logs"></div>
+    </div>
+
+    <script>
+        // Global variables
+        let ws = null;
+        let mediaRecorder = null;
+        let audioStream = null;
+        let sessionId = null;
+        let connectionStartTime = null;
+        let metrics = {
+            messagesReceived: 0,
+            messagesSent: 0,
+            audioChunks: 0,
+            reconnections: 0,
+            latencies: [],
+            connectionStartTime: null
+        };
+
+        // Audio visualization
+        let audioContext = null;
+        let analyser = null;
+        let dataArray = null;
+        let animationFrame = null;
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeAudioDevices();
+            initializeAudioVisualizer();
+            updateMetrics();
+            
+            // Update uptime every second
+            setInterval(updateUptime, 1000);
+        });
+
+        function log(level, message, data = null) {
+            const timestamp = new Date().toISOString();
+            const logContainer = document.getElementById('logs');
+            
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            
+            let logText = `<span class="log-timestamp">${timestamp}</span>`;
+            logText += `<span class="log-level ${level}">[${level.toUpperCase()}]</span>`;
+            logText += message;
+            
+            if (data) {
+                logText += ` ${JSON.stringify(data)}`;
+            }
+            
+            logEntry.innerHTML = logText;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function updateStatus(elementId, status, className = '') {
+            const element = document.getElementById(elementId);
+            element.textContent = status;
+            element.className = `status-value ${className}`;
+        }
+
+        function updateMetrics() {
+            document.getElementById('messagesReceived').textContent = metrics.messagesReceived;
+            document.getElementById('messagesSent').textContent = metrics.messagesSent;
+            document.getElementById('audioChunks').textContent = metrics.audioChunks;
+            document.getElementById('reconnections').textContent = metrics.reconnections;
+            
+            if (metrics.latencies.length > 0) {
+                const avgLatency = metrics.latencies.reduce((a, b) => a + b, 0) / metrics.latencies.length;
+                document.getElementById('averageLatency').textContent = `${Math.round(avgLatency)}ms`;
+            }
+        }
+
+        function updateUptime() {
+            if (metrics.connectionStartTime) {
+                const uptime = Math.floor((Date.now() - metrics.connectionStartTime) / 1000);
+                document.getElementById('uptime').textContent = `${uptime}s`;
+            }
+        }
+
+        async function connect() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            
+            try {
+                updateStatus('connectionStatus', 'Connecting...', 'warning');
+                log('info', `Attempting to connect to ${serverUrl}`);
+                
+                ws = new WebSocket(serverUrl);
+                
+                ws.onopen = function(event) {
+                    updateStatus('connectionStatus', 'Connected', 'success');
+                    log('success', 'WebSocket connection established');
+                    
+                    metrics.connectionStartTime = Date.now();
+                    
+                    // Update button states
+                    document.getElementById('connectBtn').disabled = true;
+                    document.getElementById('disconnectBtn').disabled = false;
+                    document.getElementById('startSessionBtn').disabled = false;
+                };
+                
+                ws.onmessage = function(event) {
+                    handleMessage(event);
+                };
+                
+                ws.onclose = function(event) {
+                    updateStatus('connectionStatus', 'Disconnected', 'error');
+                    log('warn', `WebSocket connection closed: ${event.code} - ${event.reason}`);
+                    
+                    // Update button states
+                    document.getElementById('connectBtn').disabled = false;
+                    document.getElementById('disconnectBtn').disabled = true;
+                    document.getElementById('startSessionBtn').disabled = true;
+                    document.getElementById('endSessionBtn').disabled = true;
+                    document.getElementById('startAudioBtn').disabled = true;
+                    document.getElementById('stopAudioBtn').disabled = true;
+                    
+                    // Attempt reconnection if it was unexpected
+                    if (event.code !== 1000) {
+                        setTimeout(attemptReconnection, 5000);
+                    }
+                };
+                
+                ws.onerror = function(error) {
+                    updateStatus('connectionStatus', 'Error', 'error');
+                    log('error', 'WebSocket error', error);
+                };
+                
+            } catch (error) {
+                updateStatus('connectionStatus', 'Error', 'error');
+                log('error', 'Connection failed', error);
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close(1000, 'User disconnected');
+                ws = null;
+            }
+        }
+
+        async function startSession() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('error', 'No active WebSocket connection');
+                return;
+            }
+            
+            const userId = document.getElementById('userId').value;
+            const callId = document.getElementById('callId').value;
+            const authToken = document.getElementById('authToken').value;
+            
+            if (!userId || !callId) {
+                log('error', 'User ID and Call ID are required');
+                return;
+            }
+            
+            sessionId = `${userId}_${callId}_${Date.now()}`;
+            
+            const message = {
+                type: 'session_start',
+                callId: callId,
+                timestamp: Date.now(),
+                data: {
+                    userId: userId,
+                    callId: callId,
+                    authToken: authToken || undefined
+                }
+            };
+            
+            sendMessage(message);
+            updateStatus('sessionStatus', 'Starting...', 'warning');
+            log('info', 'Starting session', { sessionId, userId, callId });
+        }
+
+        function endSession() {
+            if (!ws || !sessionId) {
+                log('error', 'No active session to end');
+                return;
+            }
+            
+            const message = {
+                type: 'session_end',
+                callId: document.getElementById('callId').value,
+                timestamp: Date.now(),
+                data: {
+                    sessionId: sessionId
+                }
+            };
+            
+            sendMessage(message);
+            updateStatus('sessionStatus', 'Ending...', 'warning');
+            log('info', 'Ending session', { sessionId });
+        }
+
+        async function startAudio() {
+            try {
+                updateStatus('audioStatus', 'Starting...', 'warning');
+                log('info', 'Starting audio capture');
+                
+                const constraints = {
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                };
+                
+                audioStream = await navigator.mediaDevices.getUserMedia(constraints);
+                
+                // Initialize audio context for visualization
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    analyser = audioContext.createAnalyser();
+                    const source = audioContext.createMediaStreamSource(audioStream);
+                    source.connect(analyser);
+                    
+                    analyser.fftSize = 256;
+                    const bufferLength = analyser.frequencyBinCount;
+                    dataArray = new Uint8Array(bufferLength);
+                    
+                    visualizeAudio();
+                }
+                
+                // Start recording
+                mediaRecorder = new MediaRecorder(audioStream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+                
+                mediaRecorder.ondataavailable = function(event) {
+                    if (event.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+                        sendAudioChunk(event.data);
+                    }
+                };
+                
+                mediaRecorder.start(100); // 100ms chunks
+                
+                updateStatus('audioStatus', 'Recording', 'success');
+                document.getElementById('startAudioBtn').disabled = true;
+                document.getElementById('stopAudioBtn').disabled = false;
+                
+                log('success', 'Audio capture started');
+                
+            } catch (error) {
+                updateStatus('audioStatus', 'Error', 'error');
+                log('error', 'Failed to start audio capture', error);
+            }
+        }
+
+        function stopAudio() {
+            if (mediaRecorder) {
+                mediaRecorder.stop();
+                mediaRecorder = null;
+            }
+            
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+                audioStream = null;
+            }
+            
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
+                animationFrame = null;
+            }
+            
+            updateStatus('audioStatus', 'Inactive', '');
+            document.getElementById('startAudioBtn').disabled = false;
+            document.getElementById('stopAudioBtn').disabled = true;
+            
+            log('info', 'Audio capture stopped');
+        }
+
+        function sendMessage(message) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(message));
+                metrics.messagesSent++;
+                updateMetrics();
+                log('info', `Sent message: ${message.type}`);
+            }
+        }
+
+        function sendAudioChunk(audioData) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                // Send as binary data
+                ws.send(audioData);
+                metrics.audioChunks++;
+                updateMetrics();
+            }
+        }
+
+        function handleMessage(event) {
+            metrics.messagesReceived++;
+            updateMetrics();
+            
+            try {
+                let message;
+                
+                if (typeof event.data === 'string') {
+                    message = JSON.parse(event.data);
+                } else {
+                    // Handle binary data (audio responses)
+                    log('info', 'Received binary audio response', { size: event.data.size });
+                    playAudioResponse(event.data);
+                    return;
+                }
+                
+                const messageType = message.type;
+                log('info', `Received message: ${messageType}`, message.data);
+                
+                switch (messageType) {
+                    case 'connection_status':
+                        handleConnectionStatus(message);
+                        break;
+                    
+                    case 'transcript':
+                        handleTranscript(message);
+                        break;
+                    
+                    case 'ai_response':
+                        handleAIResponse(message);
+                        break;
+                    
+                    case 'audio_response':
+                        handleAudioResponse(message);
+                        break;
+                    
+                    case 'heartbeat':
+                        handleHeartbeat(message);
+                        break;
+                    
+                    case 'error':
+                        handleError(message);
+                        break;
+                    
+                    case 'metrics':
+                        handleMetrics(message);
+                        break;
+                    
+                    default:
+                        log('warn', `Unhandled message type: ${messageType}`);
+                        break;
+                }
+                
+            } catch (error) {
+                log('error', 'Failed to parse message', error);
+            }
+        }
+
+        function handleConnectionStatus(message) {
+            const status = message.data.status;
+            
+            switch (status) {
+                case 'started':
+                    updateStatus('sessionStatus', 'Active', 'success');
+                    document.getElementById('endSessionBtn').disabled = false;
+                    document.getElementById('startAudioBtn').disabled = false;
+                    log('success', 'Session started successfully');
+                    break;
+                
+                case 'ended':
+                    updateStatus('sessionStatus', 'Ended', '');
+                    document.getElementById('endSessionBtn').disabled = true;
+                    document.getElementById('startAudioBtn').disabled = true;
+                    sessionId = null;
+                    stopAudio();
+                    log('info', 'Session ended', message.data);
+                    break;
+                
+                case 'reconnected':
+                    metrics.reconnections++;
+                    updateMetrics();
+                    log('success', 'Successfully reconnected');
+                    break;
+            }
+        }
+
+        function handleTranscript(message) {
+            const transcript = message.data.text;
+            const confidence = message.data.confidence;
+            
+            addConversationEntry('user', transcript, confidence);
+            log('info', `Transcript received: ${transcript} (confidence: ${confidence})`);
+        }
+
+        function handleAIResponse(message) {
+            const response = message.data.text;
+            const confidence = message.data.confidence;
+            const shouldTerminate = message.data.shouldTerminate;
+            
+            addConversationEntry('ai', response, confidence);
+            log('info', `AI response: ${response} (confidence: ${confidence}, terminate: ${shouldTerminate})`);
+            
+            if (shouldTerminate) {
+                log('warn', 'AI indicated conversation should terminate');
+            }
+        }
+
+        function handleAudioResponse(message) {
+            log('info', 'Received audio response');
+            // Audio response handling would go here
+        }
+
+        function handleHeartbeat(message) {
+            // Respond to heartbeat
+            const response = {
+                type: 'heartbeat',
+                callId: '',
+                timestamp: Date.now(),
+                data: { pong: true }
+            };
+            sendMessage(response);
+        }
+
+        function handleError(message) {
+            const error = message.data;
+            log('error', `Server error: ${error.code} - ${error.message}`);
+            updateStatus('connectionStatus', 'Error', 'error');
+        }
+
+        function handleMetrics(message) {
+            const serverMetrics = message.data;
+            updateStatus('processingLatency', `${serverMetrics.latency || 0}ms`, '');
+            
+            if (serverMetrics.latency) {
+                metrics.latencies.push(serverMetrics.latency);
+                if (metrics.latencies.length > 100) {
+                    metrics.latencies.shift();
+                }
+                updateMetrics();
+            }
+        }
+
+        function addConversationEntry(type, text, confidence) {
+            const conversationContainer = document.getElementById('conversation');
+            
+            const entry = document.createElement('div');
+            entry.className = `conversation-entry ${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            const confidenceText = confidence ? ` (${Math.round(confidence * 100)}%)` : '';
+            
+            entry.innerHTML = `
+                <div class="conversation-timestamp">${timestamp}${confidenceText}</div>
+                <div class="conversation-text">${text}</div>
+            `;
+            
+            conversationContainer.appendChild(entry);
+            conversationContainer.scrollTop = conversationContainer.scrollHeight;
+        }
+
+        function attemptReconnection() {
+            if (!ws || ws.readyState === WebSocket.CLOSED) {
+                log('info', 'Attempting automatic reconnection...');
+                connect();
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+            document.getElementById('conversation').innerHTML = '';
+        }
+
+        async function initializeAudioDevices() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const audioInputs = devices.filter(device => device.kind === 'audioinput');
+                
+                const select = document.getElementById('audioDevice');
+                select.innerHTML = '<option value="">Select Audio Device</option>';
+                
+                audioInputs.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.textContent = device.label || `Microphone ${select.children.length}`;
+                    select.appendChild(option);
+                });
+                
+            } catch (error) {
+                log('error', 'Failed to enumerate audio devices', error);
+            }
+        }
+
+        function initializeAudioVisualizer() {
+            const canvas = document.getElementById('audioVisualizer');
+            const ctx = canvas.getContext('2d');
+            
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+            
+            // Draw initial state
+            ctx.fillStyle = '#333';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function visualizeAudio() {
+            if (!analyser || !dataArray) return;
+            
+            const canvas = document.getElementById('audioVisualizer');
+            const ctx = canvas.getContext('2d');
+            
+            analyser.getByteFrequencyData(dataArray);
+            
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            const barWidth = (canvas.width / dataArray.length) * 2.5;
+            let barHeight;
+            let x = 0;
+            
+            for (let i = 0; i < dataArray.length; i++) {
+                barHeight = (dataArray[i] / 255) * canvas.height;
+                
+                const r = barHeight + 25 * (i / dataArray.length);
+                const g = 250 * (i / dataArray.length);
+                const b = 50;
+                
+                ctx.fillStyle = `rgb(${r},${g},${b})`;
+                ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                
+                x += barWidth + 1;
+            }
+            
+            animationFrame = requestAnimationFrame(visualizeAudio);
+        }
+
+        function playAudioResponse(audioData) {
+            // Convert audio data to playable format and play it
+            const audio = new Audio();
+            const blob = new Blob([audioData], { type: 'audio/webm' });
+            const url = URL.createObjectURL(blob);
+            
+            audio.src = url;
+            audio.play().then(() => {
+                log('success', 'Audio response played');
+                URL.revokeObjectURL(url);
+            }).catch(error => {
+                log('error', 'Failed to play audio response', error);
+                URL.revokeObjectURL(url);
+            });
+        }
+
+        // Export functions for global access
+        window.connect = connect;
+        window.disconnect = disconnect;
+        window.startSession = startSession;
+        window.endSession = endSession;
+        window.startAudio = startAudio;
+        window.stopAudio = stopAudio;
+        window.clearLogs = clearLogs;
+    </script>
+</body>
+</html>

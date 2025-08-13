@@ -1,0 +1,804 @@
+# =============================================================================
+# Comprehensive Observability Stack
+# Prometheus, Grafana, Jaeger, and custom monitoring services
+# =============================================================================
+
+# =============================================================================
+# Prometheus Configuration
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: ai-ninja
+  labels:
+    app: prometheus
+    tier: monitoring
+    component: metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+      tier: monitoring
+  template:
+    metadata:
+      labels:
+        app: prometheus
+        tier: monitoring
+        component: metrics
+      annotations:
+        prometheus.io/scrape: "false"  # Don't scrape itself via service discovery
+    spec:
+      serviceAccountName: prometheus-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.48.0
+        imagePullPolicy: IfNotPresent
+        args:
+          - '--config.file=/etc/prometheus/prometheus.yml'
+          - '--storage.tsdb.path=/prometheus'
+          - '--web.console.libraries=/etc/prometheus/console_libraries'
+          - '--web.console.templates=/etc/prometheus/consoles'
+          - '--storage.tsdb.retention.time=30d'
+          - '--storage.tsdb.retention.size=50GB'
+          - '--web.enable-lifecycle'
+          - '--web.enable-admin-api'
+          - '--web.route-prefix=/'
+          - '--web.external-url=https://prometheus.ai-ninja.com'
+        ports:
+        - name: web
+          containerPort: 9090
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2Gi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: 2000m
+            memory: 8Gi
+            ephemeral-storage: 4Gi
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: web
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: web
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 4
+          failureThreshold: 3
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus
+        - name: storage
+          mountPath: /prometheus
+        - name: rules
+          mountPath: /etc/prometheus/rules
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+      - name: rules
+        configMap:
+          name: prometheus-rules
+      - name: storage
+        persistentVolumeClaim:
+          claimName: prometheus-storage
+
+---
+# Prometheus Service Account and RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-sa
+  namespace: ai-ninja
+  labels:
+    app: prometheus
+    tier: monitoring
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-cr
+  labels:
+    app: prometheus
+    tier: monitoring
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/proxy
+  - services
+  - endpoints
+  - pods
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["extensions"]
+  resources:
+  - ingresses
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-crb
+  labels:
+    app: prometheus
+    tier: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-cr
+subjects:
+- kind: ServiceAccount
+  name: prometheus-sa
+  namespace: ai-ninja
+
+---
+# Prometheus Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: ai-ninja
+  labels:
+    app: prometheus
+    tier: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      scrape_timeout: 10s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'ai-ninja-production'
+        environment: 'production'
+
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              - alertmanager:9093
+
+    scrape_configs:
+      # Kubernetes API server
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+        - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: default;kubernetes;https
+
+      # Kubernetes nodes
+      - job_name: 'kubernetes-nodes'
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+        - role: node
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics
+
+      # Kubernetes pods
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+        - role: pod
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          action: replace
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+          target_label: __address__
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: kubernetes_pod_name
+
+      # AI Ninja specific services
+      - job_name: 'ai-ninja-core-services'
+        static_configs:
+        - targets:
+          - 'phone-gateway-service:3001'
+          - 'realtime-processor-service:3002'
+          - 'conversation-engine-service:3003'
+          - 'profile-analytics-service:3004'
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+        scrape_timeout: 5s
+
+      - job_name: 'ai-ninja-support-services'
+        static_configs:
+        - targets:
+          - 'user-management-service:3005'
+          - 'smart-whitelist-service:3006'
+        metrics_path: '/metrics'
+        scrape_interval: 15s
+
+      - job_name: 'ai-ninja-platform-services'
+        static_configs:
+        - targets:
+          - 'configuration-service:3007'
+          - 'storage-service:3008'
+          - 'monitoring-service:3009'
+        metrics_path: '/metrics'
+        scrape_interval: 30s
+
+      # Infrastructure services
+      - job_name: 'postgres-exporter'
+        static_configs:
+        - targets:
+          - 'postgres-exporter:9187'
+        scrape_interval: 30s
+
+      - job_name: 'redis-exporter'
+        static_configs:
+        - targets:
+          - 'redis-exporter:9121'
+        scrape_interval: 30s
+
+      # Node exporter
+      - job_name: 'node-exporter'
+        kubernetes_sd_configs:
+        - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_endpoints_name]
+          regex: 'node-exporter'
+          action: keep
+
+---
+# Prometheus Alert Rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: ai-ninja
+  labels:
+    app: prometheus
+    tier: monitoring
+data:
+  ai-ninja-alerts.yml: |
+    groups:
+    - name: ai-ninja-core-services
+      rules:
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "High error rate detected"
+          description: "Service {{ $labels.service }} has error rate above 10% for more than 2 minutes"
+
+      # High response time
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "High response time detected"
+          description: "Service {{ $labels.service }} 95th percentile response time is above 1 second"
+
+      # Service down
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: "{{ $labels.job }}"
+        annotations:
+          summary: "Service is down"
+          description: "Service {{ $labels.job }} has been down for more than 1 minute"
+
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: cpu_usage_percent > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "High CPU usage"
+          description: "Service {{ $labels.service }} CPU usage is above 80% for more than 5 minutes"
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: memory_usage_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "High memory usage"
+          description: "Service {{ $labels.service }} memory usage is above 85% for more than 5 minutes"
+
+      # WebSocket connection issues
+      - alert: WebSocketConnectionDrop
+        expr: rate(websocket_connections_dropped_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+          service: "realtime-processor"
+        annotations:
+          summary: "High WebSocket connection drop rate"
+          description: "WebSocket connections are dropping at rate > 10/sec for more than 2 minutes"
+
+      # AI processing queue buildup
+      - alert: AIProcessingQueueBuildup
+        expr: ai_processing_queue_length > 100
+        for: 5m
+        labels:
+          severity: warning
+          service: "conversation-engine"
+        annotations:
+          summary: "AI processing queue buildup"
+          description: "AI processing queue has more than 100 pending requests for more than 5 minutes"
+
+    - name: infrastructure-alerts
+      rules:
+      # Database connection issues
+      - alert: DatabaseConnectionsHigh
+        expr: postgres_stat_database_numbackends > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: "postgres"
+        annotations:
+          summary: "High database connections"
+          description: "PostgreSQL has more than 80 active connections for more than 5 minutes"
+
+      # Redis memory usage
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: "redis"
+        annotations:
+          summary: "Redis memory usage high"
+          description: "Redis memory usage is above 80% for more than 5 minutes"
+
+      # Disk space
+      - alert: DiskSpaceHigh
+        expr: (node_filesystem_size_bytes - node_filesystem_free_bytes) / node_filesystem_size_bytes > 0.85
+        for: 5m
+        labels:
+          severity: critical
+          service: "node"
+        annotations:
+          summary: "Disk space usage high"
+          description: "Disk usage is above 85% on {{ $labels.instance }}"
+
+---
+# Prometheus Storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-storage
+  namespace: ai-ninja
+  labels:
+    app: prometheus
+    tier: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: gp2
+
+---
+# =============================================================================
+# Grafana Configuration
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: ai-ninja
+  labels:
+    app: grafana
+    tier: monitoring
+    component: visualization
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+      tier: monitoring
+  template:
+    metadata:
+      labels:
+        app: grafana
+        tier: monitoring
+        component: visualization
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        fsGroup: 472
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.2.2
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: grafana
+          containerPort: 3000
+          protocol: TCP
+        env:
+        - name: GF_SECURITY_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: grafana-admin-secret
+              key: username
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-admin-secret
+              key: password
+        - name: GF_INSTALL_PLUGINS
+          value: "grafana-piechart-panel,grafana-worldmap-panel,grafana-clock-panel"
+        - name: GF_SERVER_ROOT_URL
+          value: "https://grafana.ai-ninja.com"
+        - name: GF_ANALYTICS_REPORTING_ENABLED
+          value: "false"
+        - name: GF_ANALYTICS_CHECK_FOR_UPDATES
+          value: "false"
+        - name: GF_SECURITY_DISABLE_GRAVATAR
+          value: "true"
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+            ephemeral-storage: 2Gi
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: grafana
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: grafana
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 4
+          failureThreshold: 3
+        volumeMounts:
+        - name: storage
+          mountPath: /var/lib/grafana
+        - name: datasources
+          mountPath: /etc/grafana/provisioning/datasources
+        - name: dashboards-config
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: dashboards
+          mountPath: /var/lib/grafana/dashboards
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: grafana-storage
+      - name: datasources
+        configMap:
+          name: grafana-datasources
+      - name: dashboards-config
+        configMap:
+          name: grafana-dashboards-config
+      - name: dashboards
+        configMap:
+          name: grafana-dashboards
+
+---
+# Grafana Storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-storage
+  namespace: ai-ninja
+  labels:
+    app: grafana
+    tier: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: gp2
+
+---
+# Grafana Admin Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-admin-secret
+  namespace: ai-ninja
+  labels:
+    app: grafana
+    tier: monitoring
+type: Opaque
+stringData:
+  username: admin
+  password: ai-ninja-grafana-2024  # Change this in production
+
+---
+# Grafana Datasources
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: ai-ninja
+  labels:
+    app: grafana
+    tier: monitoring
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      access: proxy
+      url: http://prometheus-service:9090
+      isDefault: true
+      editable: true
+    - name: Jaeger
+      type: jaeger
+      access: proxy
+      url: http://jaeger-service:16686
+      editable: true
+
+---
+# Grafana Dashboards Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-config
+  namespace: ai-ninja
+  labels:
+    app: grafana
+    tier: monitoring
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+    - name: 'default'
+      orgId: 1
+      folder: ''
+      type: file
+      disableDeletion: false
+      updateIntervalSeconds: 10
+      allowUiUpdates: true
+      options:
+        path: /var/lib/grafana/dashboards
+
+---
+# =============================================================================
+# Jaeger Tracing
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: ai-ninja
+  labels:
+    app: jaeger
+    tier: monitoring
+    component: tracing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jaeger
+      tier: monitoring
+  template:
+    metadata:
+      labels:
+        app: jaeger
+        tier: monitoring
+        component: tracing
+    spec:
+      containers:
+      - name: jaeger
+        image: jaegertracing/all-in-one:1.50
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: jaeger-ui
+          containerPort: 16686
+          protocol: TCP
+        - name: jaeger-collector
+          containerPort: 14268
+          protocol: TCP
+        - name: jaeger-agent
+          containerPort: 6831
+          protocol: UDP
+        env:
+        - name: COLLECTOR_OTLP_ENABLED
+          value: "true"
+        - name: MEMORY_MAX_TRACES
+          value: "10000"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: jaeger-ui
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /
+            port: jaeger-ui
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# =============================================================================
+# Service Monitors for Prometheus Operator
+# =============================================================================
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ai-ninja-core-services
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: monitoring
+spec:
+  selector:
+    matchLabels:
+      tier: core
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ai-ninja-support-services
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja
+    tier: monitoring
+spec:
+  selector:
+    matchLabels:
+      tier: support
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+
+---
+# =============================================================================
+# Custom Metrics Server
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-ninja-metrics-collector
+  namespace: ai-ninja
+  labels:
+    app: ai-ninja-metrics-collector
+    tier: monitoring
+    component: custom-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-ninja-metrics-collector
+      tier: monitoring
+  template:
+    metadata:
+      labels:
+        app: ai-ninja-metrics-collector
+        tier: monitoring
+        component: custom-metrics
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: monitoring-sa
+      containers:
+      - name: metrics-collector
+        image: ai-ninja/monitoring:latest
+        imagePullPolicy: Always
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        - name: http
+          containerPort: 3009
+          protocol: TCP
+        env:
+        - name: PROMETHEUS_URL
+          value: "http://prometheus-service:9090"
+        - name: METRICS_PORT
+          value: "8080"
+        - name: HTTP_PORT
+          value: "3009"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+      volumes:
+      - name: config
+        configMap:
+          name: ai-ninja-monitoring-config

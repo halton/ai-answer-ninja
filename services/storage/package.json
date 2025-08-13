@@ -1,0 +1,65 @@
+{
+  "name": "storage-service",
+  "version": "1.0.0",
+  "description": "统一存储管理服务 - 支持文件存储、音频管理、数据归档",
+  "main": "dist/server.js",
+  "author": "AI Answer Ninja Team",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write src/**/*.ts",
+    "docker:build": "docker build -t storage-service .",
+    "docker:run": "docker run -p 3008:3008 storage-service"
+  },
+  "dependencies": {
+    "@azure/storage-blob": "^12.17.0",
+    "@azure/identity": "^4.0.1",
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1",
+    "ioredis": "^5.3.2",
+    "sharp": "^0.33.0",
+    "ffmpeg-static": "^5.2.0",
+    "fluent-ffmpeg": "^2.1.2",
+    "mime-types": "^2.1.35",
+    "uuid": "^9.0.1",
+    "zod": "^3.22.4",
+    "compression": "^1.7.4",
+    "helmet": "^7.1.0",
+    "cors": "^2.8.5",
+    "winston": "^3.11.0",
+    "cron": "^3.1.6",
+    "crypto": "^1.0.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.11",
+    "@types/mime-types": "^2.1.4",
+    "@types/uuid": "^9.0.7",
+    "@types/compression": "^1.7.5",
+    "@types/cors": "^2.8.17",
+    "@types/fluent-ffmpeg": "^2.1.24",
+    "@types/node": "^20.10.0",
+    "@types/jest": "^29.5.8",
+    "typescript": "^5.3.2",
+    "tsx": "^4.6.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "eslint": "^8.54.0",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0",
+    "prettier": "^3.1.0"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "collectCoverageFrom": [
+      "src/**/*.ts",
+      "!src/**/*.d.ts"
+    ]
+  }
+}

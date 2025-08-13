@@ -1,7 +1,6 @@
 # AI Answer Ninja - High Availability Docker Compose Configuration
 # Multi-instance deployment with service discovery and load balancing
 
-version: '3.8'
 
 x-common-variables: &common-variables
   NODE_ENV: ${NODE_ENV:-production}

@@ -1,0 +1,49 @@
+# Nginx Proxy Parameters for AI Answer Ninja API Gateway
+
+# Basic proxy settings
+proxy_http_version 1.1;
+proxy_buffering on;
+proxy_buffer_size 128k;
+proxy_buffers 4 256k;
+proxy_busy_buffers_size 256k;
+
+# Connection settings
+proxy_connect_timeout 10s;
+proxy_send_timeout 30s;
+proxy_read_timeout 30s;
+proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+proxy_next_upstream_tries 3;
+proxy_next_upstream_timeout 10s;
+
+# Headers to pass to backend
+proxy_set_header Host $http_host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-Host $host;
+proxy_set_header X-Forwarded-Port $server_port;
+proxy_set_header X-Request-ID $request_id;
+
+# Connection pooling
+proxy_set_header Connection "";
+
+# Request metadata
+proxy_set_header X-Original-URI $request_uri;
+proxy_set_header X-Original-Method $request_method;
+proxy_set_header X-Request-Start $msec;
+
+# User agent and referer
+proxy_set_header User-Agent $http_user_agent;
+proxy_set_header Referer $http_referer;
+
+# Client certificate (if using mutual TLS)
+proxy_set_header X-SSL-Client-Cert $ssl_client_cert;
+proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
+proxy_set_header X-SSL-Client-Subject-DN $ssl_client_s_dn;
+
+# Disable buffering for real-time responses
+# proxy_buffering off; (uncomment for streaming responses)
+
+# Response headers
+proxy_hide_header X-Powered-By;
+proxy_hide_header Server;

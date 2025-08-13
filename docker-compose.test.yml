@@ -1,471 +1,201 @@
-# Docker Compose configuration for testing environment
-version: '3.9'
-
-networks:
-  ai-ninja-test:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
-
-volumes:
-  postgres_test_data:
-    driver: local
-  redis_test_data:
-    driver: local
-  test_logs:
-    driver: local
 
 services:
-  # Database Services
+  # 数据库服务
   postgres-test:
     image: postgres:15-alpine
-    container_name: ai-ninja-postgres-test
     environment:
-      POSTGRES_DB: ai_ninja_test
-      POSTGRES_USER: test
+      POSTGRES_DB: ai_answer_ninja_test
+      POSTGRES_USER: testuser
       POSTGRES_PASSWORD: testpass
-      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
-    volumes:
-      - postgres_test_data:/var/lib/postgresql/data
-      - ./database/init:/docker-entrypoint-initdb.d
+      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5433:5432"
-    networks:
-      - ai-ninja-test
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./scripts/db/init-test.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U test -d ai_ninja_test"]
+      test: ["CMD-SHELL", "pg_isready -U testuser -d ai_answer_ninja_test"]
       interval: 10s
       timeout: 5s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 256M
+    networks:
+      - test-network
 
+  # Redis缓存
   redis-test:
     image: redis:7-alpine
-    container_name: ai-ninja-redis-test
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    volumes:
-      - redis_test_data:/data
+    command: redis-server --appendonly yes --requirepass testpass
     ports:
       - "6380:6379"
-    networks:
-      - ai-ninja-test
+    volumes:
+      - redis_test_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "testpass", "ping"]
       interval: 10s
-      timeout: 3s
+      timeout: 5s
       retries: 3
-    deploy:
-      resources:
-        limits:
-          memory: 256M
+    networks:
+      - test-network
 
-  # Core Services
-  user-management-test:
+  # Phone Gateway Service
+  phone-gateway-test:
     build:
-      context: ./services/user-management
-      dockerfile: Dockerfile
-      target: testing
-      args:
-        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
-        VCS_REF: ${VCS_REF:-$(git rev-parse --short HEAD)}
-        VERSION: ${VERSION:-test}
-    container_name: ai-ninja-user-management-test
+      context: ./services/phone-gateway
+      dockerfile: Dockerfile.test
+    ports:
+      - "3001:3001"
     environment:
       NODE_ENV: test
-      PORT: 3005
-      DATABASE_URL: postgresql://test:testpass@postgres-test:5432/ai_ninja_test
-      REDIS_URL: redis://redis-test:6379
-      JWT_SECRET: test-jwt-secret-key
+      PORT: 3001
+      DATABASE_URL: postgresql://testuser:testpass@postgres-test:5432/ai_answer_ninja_test
+      REDIS_URL: redis://:testpass@redis-test:6379
+      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY_TEST}
+      AZURE_SPEECH_REGION: eastus
       LOG_LEVEL: debug
-      HEALTH_CHECK_ENDPOINT: /health
-    ports:
-      - "3005:3005"
     depends_on:
       postgres-test:
         condition: service_healthy
       redis-test:
         condition: service_healthy
-    networks:
-      - ai-ninja-test
-    volumes:
-      - test_logs:/app/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 256M
-
-  smart-whitelist-test:
-    build:
-      context: .
-      dockerfile: services/smart-whitelist/Dockerfile
-      target: testing
-      args:
-        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
-        VCS_REF: ${VCS_REF:-$(git rev-parse --short HEAD)}
-        VERSION: ${VERSION:-test}
-    container_name: ai-ninja-smart-whitelist-test
-    environment:
-      GIN_MODE: test
-      PORT: 3006
-      DATABASE_URL: postgresql://test:testpass@postgres-test:5432/ai_ninja_test
-      REDIS_URL: redis://redis-test:6379
-      LOG_LEVEL: debug
-      USER_MANAGEMENT_URL: http://user-management-test:3005
-    ports:
-      - "3006:3006"
-    depends_on:
-      postgres-test:
-        condition: service_healthy
-      redis-test:
-        condition: service_healthy
-      user-management-test:
-        condition: service_healthy
+      start_period: 40s
     networks:
-      - ai-ninja-test
-    volumes:
-      - test_logs:/app/logs
-    healthcheck:
-      test: ["CMD", "/app", "-health-check"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 45s
-    deploy:
-      resources:
-        limits:
-          memory: 256M
+      - test-network
 
-  realtime-processor-test:
+  # Configuration Service
+  configuration-service-test:
     build:
-      context: .
-      dockerfile: services/realtime-processor/Dockerfile
-      target: testing
-      args:
-        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
-        VCS_REF: ${VCS_REF:-$(git rev-parse --short HEAD)}
-        VERSION: ${VERSION:-test}
-    container_name: ai-ninja-realtime-processor-test
-    environment:
-      NODE_ENV: test
-      PORT: 3002
-      REDIS_URL: redis://redis-test:6379
-      USER_MANAGEMENT_URL: http://user-management-test:3005
-      CONVERSATION_ENGINE_URL: http://conversation-engine-test:3003
-      WEBSOCKET_PORT: 3002
-      AUDIO_PROCESSING_ENABLED: "true"
-      LOG_LEVEL: debug
-    ports:
-      - "3002:3002"
-    depends_on:
-      redis-test:
-        condition: service_healthy
-      user-management-test:
-        condition: service_healthy
-    networks:
-      - ai-ninja-test
-    volumes:
-      - test_logs:/app/logs
-      - ./storage/audio:/app/storage/audio
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 512M
-
-  conversation-engine-test:
-    build:
-      context: .
-      dockerfile: services/conversation-engine/Dockerfile
-      target: testing
-      args:
-        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
-        VCS_REF: ${VCS_REF:-$(git rev-parse --short HEAD)}
-        VERSION: ${VERSION:-test}
-    container_name: ai-ninja-conversation-engine-test
-    environment:
-      FASTAPI_ENV: test
-      PORT: 3003
-      DATABASE_URL: postgresql://test:testpass@postgres-test:5432/ai_ninja_test
-      REDIS_URL: redis://redis-test:6379
-      USER_MANAGEMENT_URL: http://user-management-test:3005
-      PROFILE_ANALYTICS_URL: http://profile-analytics-test:3004
-      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-mock}
-      AZURE_OPENAI_KEY: ${AZURE_OPENAI_KEY:-mock-key}
-      LOG_LEVEL: debug
-    ports:
-      - "3003:3003"
-    depends_on:
-      postgres-test:
-        condition: service_healthy
-      redis-test:
-        condition: service_healthy
-      user-management-test:
-        condition: service_healthy
-    networks:
-      - ai-ninja-test
-    volumes:
-      - test_logs:/app/logs
-      - ./ml/models:/app/ml/models
-    healthcheck:
-      test: ["CMD", "python", "healthcheck.py"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 512M
-
-  profile-analytics-test:
-    build:
-      context: .
-      dockerfile: services/profile-analytics/Dockerfile
-      target: testing
-      args:
-        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
-        VCS_REF: ${VCS_REF:-$(git rev-parse --short HEAD)}
-        VERSION: ${VERSION:-test}
-    container_name: ai-ninja-profile-analytics-test
-    environment:
-      FASTAPI_ENV: test
-      PORT: 3004
-      DATABASE_URL: postgresql://test:testpass@postgres-test:5432/ai_ninja_test
-      REDIS_URL: redis://redis-test:6379
-      ML_MODEL_PATH: /app/ml/models
-      ENABLE_ML_TRAINING: "false"
-      LOG_LEVEL: debug
-    ports:
-      - "3004:3004"
-    depends_on:
-      postgres-test:
-        condition: service_healthy
-      redis-test:
-        condition: service_healthy
-    networks:
-      - ai-ninja-test
-    volumes:
-      - test_logs:/app/logs
-      - ./ml/models:/app/ml/models
-      - ./storage/models:/app/storage/models
-    healthcheck:
-      test: ["CMD", "python", "healthcheck.py"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 512M
-
-  conversation-analyzer-test:
-    build:
-      context: .
-      dockerfile: services/conversation-analyzer/Dockerfile
-      target: testing
-      args:
-        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
-        VCS_REF: ${VCS_REF:-$(git rev-parse --short HEAD)}
-        VERSION: ${VERSION:-test}
-    container_name: ai-ninja-conversation-analyzer-test
-    environment:
-      FASTAPI_ENV: test
-      PORT: 3007
-      DATABASE_URL: postgresql://test:testpass@postgres-test:5432/ai_ninja_test
-      REDIS_URL: redis://redis-test:6379
-      CONVERSATION_ENGINE_URL: http://conversation-engine-test:3003
-      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY:-mock-key}
-      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION:-eastus}
-      LOG_LEVEL: debug
+      context: ./services/configuration-service
+      dockerfile: Dockerfile.test
     ports:
       - "3007:3007"
+    environment:
+      NODE_ENV: test
+      PORT: 3007
+      DATABASE_URL: postgresql://testuser:testpass@postgres-test:5432/ai_answer_ninja_test
+      REDIS_URL: redis://:testpass@redis-test:6379
+      LOG_LEVEL: debug
     depends_on:
       postgres-test:
         condition: service_healthy
       redis-test:
         condition: service_healthy
-      conversation-engine-test:
-        condition: service_healthy
-    networks:
-      - ai-ninja-test
-    volumes:
-      - test_logs:/app/logs
     healthcheck:
-      test: ["CMD", "python", "healthcheck.py"]
+      test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          memory: 512M
+    networks:
+      - test-network
 
-  # Testing Tools and Utilities
-  test-runner:
+  # Monitoring Service
+  monitoring-test:
     build:
-      context: .
-      dockerfile: docker/Dockerfile.test-runner
-    container_name: ai-ninja-test-runner
+      context: ./services/monitoring
+      dockerfile: Dockerfile.test
+    ports:
+      - "3009:3009"
+      - "9090:9090"  # Prometheus metrics
     environment:
       NODE_ENV: test
-      DATABASE_URL: postgresql://test:testpass@postgres-test:5432/ai_ninja_test
-      REDIS_URL: redis://redis-test:6379
-      API_BASE_URL: http://user-management-test:3005
-      WEBSOCKET_BASE_URL: ws://realtime-processor-test:3002
-      TEST_TIMEOUT: 60000
+      PORT: 3009
+      DATABASE_URL: postgresql://testuser:testpass@postgres-test:5432/ai_answer_ninja_test
+      REDIS_URL: redis://:testpass@redis-test:6379
+      LOG_LEVEL: debug
     depends_on:
-      - user-management-test
-      - smart-whitelist-test
-      - realtime-processor-test
-      - conversation-engine-test
-      - profile-analytics-test
-      - conversation-analyzer-test
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3009/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
-      - ai-ninja-test
-    volumes:
-      - ./tests:/app/tests
-      - ./reports:/app/reports
-      - test_logs:/app/logs
-    command: ["npm", "run", "test:all"]
-    profiles:
-      - test
+      - test-network
 
-  # Monitoring and Observability
-  prometheus-test:
-    image: prom/prometheus:latest
-    container_name: ai-ninja-prometheus-test
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.enable-lifecycle'
-      - '--web.enable-admin-api'
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./config/monitoring/prometheus-test.yml:/etc/prometheus/prometheus.yml
-    networks:
-      - ai-ninja-test
-    profiles:
-      - monitoring
-
-  grafana-test:
-    image: grafana/grafana:latest
-    container_name: ai-ninja-grafana-test
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_USERS_ALLOW_SIGN_UP: "false"
-    ports:
-      - "3001:3000"
-    volumes:
-      - ./config/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
-      - ./config/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
-    depends_on:
-      - prometheus-test
-    networks:
-      - ai-ninja-test
-    profiles:
-      - monitoring
-
-  # Load Testing Service
-  load-tester:
+  # Smart Whitelist Service
+  smart-whitelist-test:
     build:
-      context: .
-      dockerfile: docker/Dockerfile.load-tester
-    container_name: ai-ninja-load-tester
+      context: ./services/smart-whitelist-node
+      dockerfile: Dockerfile.test
+    ports:
+      - "3006:3006"
     environment:
-      TARGET_ENVIRONMENT: test
-      USER_MANAGEMENT_URL: http://user-management-test:3005
-      SMART_WHITELIST_URL: http://smart-whitelist-test:3006
-      REALTIME_PROCESSOR_URL: http://realtime-processor-test:3002
-      CONVERSATION_ENGINE_URL: http://conversation-engine-test:3003
-      PROFILE_ANALYTICS_URL: http://profile-analytics-test:3004
-      LOAD_TEST_DURATION: 300
-      CONCURRENT_USERS: 10
+      NODE_ENV: test
+      PORT: 3006
+      DATABASE_URL: postgresql://testuser:testpass@postgres-test:5432/ai_answer_ninja_test
+      REDIS_URL: redis://:testpass@redis-test:6379
+      PYTHON_SERVICE_URL: http://ml-classifier-test:8000
+      LOG_LEVEL: debug
     depends_on:
-      - user-management-test
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+      ml-classifier-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - test-network
+
+  # ML分类器服务 (Python)
+  ml-classifier-test:
+    build:
+      context: ./services/smart-whitelist-node/src/ml
+      dockerfile: Dockerfile.test
+    ports:
+      - "8001:8000"
+    environment:
+      ENVIRONMENT: test
+      REDIS_URL: redis://:testpass@redis-test:6379
+      MODEL_PATH: /app/models/test
+    volumes:
+      - ./services/smart-whitelist-node/src/ml/models:/app/models
+    depends_on:
+      redis-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - test-network
+
+  # API网关 (nginx)
+  api-gateway-test:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./docker/nginx/test.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - phone-gateway-test
+      - configuration-service-test
+      - monitoring-test
       - smart-whitelist-test
-      - realtime-processor-test
-      - conversation-engine-test
-      - profile-analytics-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
-      - ai-ninja-test
-    volumes:
-      - ./tests/load:/app/tests
-      - ./reports/load:/app/reports
-    profiles:
-      - load-test
+      - test-network
 
-  # Mock External Services for Testing
-  azure-mock:
-    image: wiremock/wiremock:latest
-    container_name: ai-ninja-azure-mock
-    command: ["--port", "8080", "--global-response-templating"]
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./tests/mocks/azure:/home/wiremock/mappings
-    networks:
-      - ai-ninja-test
-    profiles:
-      - mock
+volumes:
+  postgres_test_data:
+  redis_test_data:
 
-  # Database Administration
-  pgadmin-test:
-    image: dpage/pgadmin4:latest
-    container_name: ai-ninja-pgadmin-test
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@test.local
-      PGADMIN_DEFAULT_PASSWORD: admin
-      PGADMIN_LISTEN_PORT: 5050
-    ports:
-      - "5050:5050"
-    depends_on:
-      - postgres-test
-    networks:
-      - ai-ninja-test
-    profiles:
-      - admin
-
-  # Redis Administration
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    container_name: ai-ninja-redis-commander
-    environment:
-      REDIS_HOSTS: test:redis-test:6379
-    ports:
-      - "8081:8081"
-    depends_on:
-      - redis-test
-    networks:
-      - ai-ninja-test
-    profiles:
-      - admin
+networks:
+  test-network:
+    driver: bridge

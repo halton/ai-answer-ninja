@@ -1,0 +1,475 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "AI Answer Ninja - System Overview",
+    "tags": ["ai-answer-ninja", "monitoring"],
+    "style": "dark",
+    "timezone": "browser",
+    "editable": true,
+    "hideControls": false,
+    "graphTooltip": 0,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"],
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"]
+    },
+    "refresh": "30s",
+    "schemaVersion": 16,
+    "version": 1,
+    "panels": [
+      {
+        "id": 1,
+        "title": "Service Health Overview",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up",
+            "refId": "A",
+            "legendFormat": "{{job}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "type": "value",
+                "value": "1",
+                "text": "UP"
+              },
+              {
+                "type": "value",
+                "value": "0",
+                "text": "DOWN"
+              }
+            ],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": 0
+                },
+                {
+                  "color": "green",
+                  "value": 1
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "Call Volume",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(phone_calls_total[5m])",
+            "refId": "A",
+            "legendFormat": "Calls/sec"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Calls per second",
+            "min": 0
+          },
+          {
+            "show": false
+          }
+        ],
+        "xAxis": {
+          "show": true
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "alert": {
+          "conditions": [
+            {
+              "query": {
+                "params": ["A", "5m", "now"]
+              },
+              "reducer": {
+                "type": "avg",
+                "params": []
+              },
+              "evaluator": {
+                "params": [100],
+                "type": "gt"
+              }
+            }
+          ],
+          "executionErrorState": "alerting",
+          "for": "2m",
+          "frequency": "10s",
+          "handler": 1,
+          "name": "High Call Volume",
+          "noDataState": "no_data",
+          "notifications": []
+        }
+      },
+      {
+        "id": 3,
+        "title": "Response Time Percentiles",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket[5m]))",
+            "refId": "A",
+            "legendFormat": "50th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+            "refId": "B",
+            "legendFormat": "95th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))",
+            "refId": "C",
+            "legendFormat": "99th percentile"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Seconds",
+            "min": 0,
+            "max": 5
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        },
+        "thresholds": [
+          {
+            "value": 1.5,
+            "colorMode": "critical",
+            "op": "EVAL_GT",
+            "fill": true,
+            "line": true,
+            "yaxis": "left"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Error Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{code=~\"5..\"}[5m]) / rate(http_requests_total[5m]) * 100",
+            "refId": "A",
+            "legendFormat": "{{job}} Error Rate %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Error Rate (%)",
+            "min": 0,
+            "max": 10
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "thresholds": [
+          {
+            "value": 5,
+            "colorMode": "critical",
+            "op": "EVAL_GT"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Voice Processing Latency",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(voice_processing_duration_seconds_bucket[5m]))",
+            "refId": "A",
+            "legendFormat": "95th percentile"
+          },
+          {
+            "expr": "avg(voice_processing_duration_seconds)",
+            "refId": "B",
+            "legendFormat": "Average"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Seconds",
+            "min": 0,
+            "max": 3
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 16
+        },
+        "thresholds": [
+          {
+            "value": 1.5,
+            "colorMode": "critical",
+            "op": "EVAL_GT"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "AI Response Quality",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "avg(ai_response_confidence_score)",
+            "refId": "A",
+            "legendFormat": "Confidence Score"
+          },
+          {
+            "expr": "rate(ai_classification_errors_total[5m])",
+            "refId": "B",
+            "legendFormat": "Error Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 0.7
+                },
+                {
+                  "color": "green",
+                  "value": 0.9
+                }
+              ]
+            },
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 16
+        }
+      },
+      {
+        "id": 7,
+        "title": "Database Performance",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "pg_stat_database_tup_fetched / pg_stat_database_tup_returned",
+            "refId": "A",
+            "legendFormat": "Query Efficiency - {{datname}}"
+          },
+          {
+            "expr": "pg_stat_activity_count",
+            "refId": "B",
+            "legendFormat": "Active Connections"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Ratio / Count"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        }
+      },
+      {
+        "id": 8,
+        "title": "Resource Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "100 - (avg(irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+            "refId": "A",
+            "legendFormat": "CPU Usage %"
+          },
+          {
+            "expr": "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100",
+            "refId": "B",
+            "legendFormat": "Memory Usage %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage",
+            "min": 0,
+            "max": 100
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 24
+        },
+        "thresholds": [
+          {
+            "value": 80,
+            "colorMode": "critical",
+            "op": "EVAL_GT"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Whitelist Effectiveness",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(whitelist_hits_total[5m]) / rate(phone_calls_total[5m]) * 100",
+            "refId": "A",
+            "legendFormat": "Whitelist Hit Rate %"
+          },
+          {
+            "expr": "rate(spam_blocked_total[5m])",
+            "refId": "B",
+            "legendFormat": "Spam Blocked/sec"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Rate / Percentage"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 32
+        }
+      },
+      {
+        "id": 10,
+        "title": "Security Events",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(auth_failed_total[5m])",
+            "refId": "A",
+            "legendFormat": "Failed Logins/sec"
+          },
+          {
+            "expr": "rate(http_requests_total{code=\"401\"}[5m])",
+            "refId": "B",
+            "legendFormat": "Unauthorized Requests/sec"
+          },
+          {
+            "expr": "rate(phone_calls_total{spam_category=\"suspicious\"}[5m])",
+            "refId": "C",
+            "legendFormat": "Suspicious Calls/sec"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Events per second"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 32
+        },
+        "alert": {
+          "conditions": [
+            {
+              "query": {
+                "params": ["A", "5m", "now"]
+              },
+              "reducer": {
+                "type": "avg",
+                "params": []
+              },
+              "evaluator": {
+                "params": [5],
+                "type": "gt"
+              }
+            }
+          ],
+          "executionErrorState": "alerting",
+          "for": "1m",
+          "frequency": "10s",
+          "handler": 1,
+          "name": "High Failed Login Rate",
+          "noDataState": "no_data",
+          "notifications": []
+        }
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "environment",
+          "type": "query",
+          "query": "label_values(environment)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true,
+          "allValue": ".*"
+        },
+        {
+          "name": "service",
+          "type": "query",
+          "query": "label_values(job)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true,
+          "allValue": ".*"
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "-- Grafana --",
+          "type": "dashboard",
+          "iconColor": "green",
+          "tags": ["deployment"]
+        },
+        {
+          "name": "Alerts",
+          "datasource": "Prometheus",
+          "expr": "ALERTS{alertstate=\"firing\"}",
+          "iconColor": "red",
+          "tags": ["alert"]
+        }
+      ]
+    }
+  }
+}
