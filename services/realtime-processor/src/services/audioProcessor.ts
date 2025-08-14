@@ -33,8 +33,8 @@ export class AudioProcessor {
     
     // Initialize processing queue with concurrency limit
     this.processingQueue = new PQueue({
-      concurrency: config.maxConcurrentProcessing,
-      timeout: config.processingTimeout,
+      concurrency: config.maxConcurrentProcessing || 5,
+      timeout: config.processingTimeout || 30000,
     });
 
     logger.info('Audio processor created');

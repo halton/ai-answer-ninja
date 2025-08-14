@@ -1,0 +1,219 @@
+version: '3.8'
+
+services:
+  # ===========================================
+  # 数据存储服务 (基础设施)
+  # ===========================================
+  
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai-ninja-postgres-e2e
+    ports:
+      - "5433:5432"  # 使用不同端口避免冲突
+    environment:
+      - POSTGRES_DB=ai_ninja_test
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=test123
+      - POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C
+    networks:
+      - ai-ninja-e2e
+    volumes:
+      - postgres_e2e_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    command: >
+      postgres
+      -c max_connections=100
+      -c shared_buffers=128MB
+      -c effective_cache_size=512MB
+      -c work_mem=2MB
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai-ninja-redis-e2e
+    ports:
+      - "6380:6379"  # 使用不同端口避免冲突
+    networks:
+      - ai-ninja-e2e
+    volumes:
+      - redis_e2e_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb
+
+  # ===========================================
+  # Azure服务Mock (避免真实API调用)
+  # ===========================================
+  
+  azure-mock:
+    build:
+      context: ./tests/mocks
+      dockerfile: Dockerfile.azure-mock
+    container_name: ai-ninja-azure-mock
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=test
+      - MOCK_AZURE_SPEECH=true
+      - MOCK_AZURE_OPENAI=true
+      - MOCK_AZURE_COMMUNICATION=true
+    networks:
+      - ai-ninja-e2e
+
+  # ===========================================
+  # 核心业务服务 (E2E测试优先级)
+  # ===========================================
+
+  user-management:
+    build:
+      context: ./services/user-management
+      dockerfile: Dockerfile
+    container_name: ai-ninja-user-management-e2e
+    ports:
+      - "3005:3005"
+    environment:
+      - NODE_ENV=test
+      - JWT_SECRET=test-jwt-secret-key-for-e2e-testing
+      - JWT_EXPIRES_IN=1h
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:test123@postgres:5432/ai_ninja_test
+      - LOG_LEVEL=warn
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - ai-ninja-e2e
+    volumes:
+      - ./logs/user-management:/app/logs
+
+  smart-whitelist:
+    build:
+      context: ./services/smart-whitelist-node
+      dockerfile: Dockerfile
+    container_name: ai-ninja-smart-whitelist-e2e
+    ports:
+      - "3006:3006"
+    environment:
+      - NODE_ENV=test
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:test123@postgres:5432/ai_ninja_test
+      - LOG_LEVEL=warn
+      - ML_ENABLED=false  # 简化ML功能用于测试
+    depends_on:
+      - postgres
+      - redis
+      - user-management
+    networks:
+      - ai-ninja-e2e
+
+  phone-gateway:
+    build:
+      context: ./services/phone-gateway
+      dockerfile: Dockerfile
+    container_name: ai-ninja-phone-gateway-e2e
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=test
+      - AZURE_COMMUNICATION_CONNECTION_STRING=mock://azure-mock:8080/communication
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:test123@postgres:5432/ai_ninja_test
+      - USER_MANAGEMENT_URL=http://user-management:3005
+      - WHITELIST_SERVICE_URL=http://smart-whitelist:3006
+      - REALTIME_PROCESSOR_URL=http://realtime-processor:3002
+      - LOG_LEVEL=warn
+    depends_on:
+      - postgres
+      - redis
+      - user-management
+      - smart-whitelist
+      - azure-mock
+    networks:
+      - ai-ninja-e2e
+
+  realtime-processor:
+    build:
+      context: ./services/realtime-processor
+      dockerfile: Dockerfile
+    container_name: ai-ninja-realtime-processor-e2e
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=test
+      - AZURE_SPEECH_KEY=mock-key
+      - AZURE_SPEECH_REGION=mock-region
+      - AZURE_OPENAI_KEY=mock-key
+      - AZURE_OPENAI_ENDPOINT=http://azure-mock:8080/openai
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:test123@postgres:5432/ai_ninja_test
+      - CONVERSATION_ENGINE_URL=http://conversation-engine:3003
+      - LOG_LEVEL=warn
+      - AZURE_MOCK_MODE=true
+    depends_on:
+      - postgres
+      - redis
+      - azure-mock
+    networks:
+      - ai-ninja-e2e
+
+  conversation-engine:
+    build:
+      context: ./services/conversation-engine-ts
+      dockerfile: Dockerfile
+    container_name: ai-ninja-conversation-engine-e2e
+    ports:
+      - "3003:3003"
+    environment:
+      - NODE_ENV=test
+      - AZURE_OPENAI_KEY=mock-key
+      - AZURE_OPENAI_ENDPOINT=http://azure-mock:8080/openai
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://postgres:test123@postgres:5432/ai_ninja_test
+      - PROFILE_ANALYTICS_URL=http://profile-analytics:3004
+      - LOG_LEVEL=warn
+      - AZURE_MOCK_MODE=true
+    depends_on:
+      - postgres
+      - redis
+      - azure-mock
+    networks:
+      - ai-ninja-e2e
+
+  # ===========================================
+  # E2E测试运行器
+  # ===========================================
+
+  e2e-test-runner:
+    build:
+      context: ./tests/e2e
+      dockerfile: Dockerfile
+    container_name: ai-ninja-e2e-runner
+    environment:
+      - NODE_ENV=test
+      - TEST_API_BASE_URL=http://phone-gateway:3001
+      - USER_MANAGEMENT_URL=http://user-management:3005
+      - WHITELIST_SERVICE_URL=http://smart-whitelist:3006
+      - POSTGRES_URL=postgresql://postgres:test123@postgres:5432/ai_ninja_test
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - phone-gateway
+      - realtime-processor
+      - conversation-engine
+      - user-management
+      - smart-whitelist
+    networks:
+      - ai-ninja-e2e
+    volumes:
+      - ./tests/e2e/reports:/app/reports
+      - ./tests/e2e/screenshots:/app/screenshots
+    command: ["npm", "test"]
+
+networks:
+  ai-ninja-e2e:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+volumes:
+  postgres_e2e_data:
+    driver: local
+  redis_e2e_data:
+    driver: local

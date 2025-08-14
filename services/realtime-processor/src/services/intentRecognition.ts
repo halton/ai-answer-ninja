@@ -256,8 +256,7 @@ export class IntentRecognitionService {
     }
 
     if (context.conversationHistory && context.conversationHistory.length > 0) {
-      const recentHistory = context.conversationHistory.slice(-3).join('
-');
+      const recentHistory = context.conversationHistory.slice(-3).join('\n');
       contextInfo += `
 
 对话历史：
@@ -306,8 +305,7 @@ ${recentHistory}`;
 
     let contextInfo = '';
     if (context.conversationHistory && context.conversationHistory.length > 0) {
-      const recentHistory = context.conversationHistory.slice(-5).join('
-');
+      const recentHistory = context.conversationHistory.slice(-5).join('\n');
       contextInfo = `
 
 对话历史：
